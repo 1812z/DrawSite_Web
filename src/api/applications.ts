@@ -48,6 +48,16 @@ export const getApplication = (id: string) => request<Application>(`/application
 export const updateApplication = (id: string, payload: ApplicationRequest) =>
   request<Application>(`/applications/${id}`, { method: 'PUT', body: JSON.stringify(payload) })
 
+/**
+ * 删除应用。后端会清理工作区目录（含 .git）、会话消息、对话任务与版本记录，并自动停止该应用全部回复，
+ * 前端不需要先取消。初始化中返回 409 APPLICATION_BUSY；目录清理失败返回 500 WORKSPACE_DELETE_FAILED
+ * 且保留数据库记录，可重试。
+ *
+ * 目录里可能有依赖与产物，删干净耗时明显长于普通请求，所以单独放宽超时（默认 15 秒）。
+ */
+export const deleteApplication = (id: string) =>
+  request<null>(`/applications/${id}`, { method: 'DELETE', signal: AbortSignal.timeout(120_000) })
+
 export const listRevisions = (id: string, page = 1, size = 20) =>
   request<PageResult<Revision>>(`/applications/${id}/revisions?page=${page}&size=${size}`)
 

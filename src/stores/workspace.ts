@@ -58,6 +58,19 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     }
   }
 
+  /** 强制重新拉取会话列表：首轮回复后服务端会生成会话标题，需要刷新侧栏。 */
+  async function refreshConversations(applicationId: string): Promise<void> {
+    conversationsLoading[applicationId] = true
+    try {
+      const result = await conversationsApi.listConversations(applicationId, 1, 50)
+      conversationsByApplication[applicationId] = result.records
+    } catch {
+      // 刷新失败保留原列表，不打断当前会话
+    } finally {
+      conversationsLoading[applicationId] = false
+    }
+  }
+
   /** 新建会话固定使用“新建会话”标题，不需要用户输入。 */
   async function createConversation(applicationId: string): Promise<Conversation> {
     const created = await conversationsApi.createConversation(applicationId, NEW_CONVERSATION_TITLE)
@@ -75,6 +88,26 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       if (index >= 0) list[index] = updated
     }
     return updated
+  }
+
+  /** 删除会话。后端已自动停止该会话回复并清理任务，这里只同步侧栏列表。 */
+  async function deleteConversation(applicationId: string, id: string): Promise<void> {
+    await conversationsApi.deleteConversation(applicationId, id)
+    const list = conversationsByApplication[applicationId]
+    if (list) {
+      const index = list.findIndex((item) => item.id === id)
+      if (index >= 0) list.splice(index, 1)
+    }
+  }
+
+  /** 删除应用。后端会连带清理工作区目录、会话消息、对话任务与版本记录。 */
+  async function deleteApplication(id: string): Promise<void> {
+    await applicationsApi.deleteApplication(id)
+    const index = applications.value.findIndex((item) => item.id === id)
+    if (index >= 0) applications.value.splice(index, 1)
+    delete conversationsByApplication[id]
+    delete conversationsLoading[id]
+    expandedIds.delete(id)
   }
 
   function reset(): void {
@@ -96,8 +129,11 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     isExpanded,
     toggle,
     loadConversations,
+    refreshConversations,
     createConversation,
     renameConversation,
+    deleteConversation,
+    deleteApplication,
     reset,
   }
 })

@@ -6,7 +6,7 @@ export const useSystemStore = defineStore('system', () => {
   const health = ref<HealthStatus | null>(null)
   const loading = ref(false)
   const error = ref('')
-  const label = computed(() => loading.value ? '正在连接' : health.value?.status === 'UP' ? '服务已连接' : '服务未连接')
+  const label = computed(() => loading.value ? '连接中' : health.value?.status === 'UP' ? '已连接' : '已断开')
 
   async function checkHealth() {
     if (loading.value) return

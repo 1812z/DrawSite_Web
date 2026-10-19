@@ -28,6 +28,19 @@ async function redirectToLogin(): Promise<void> {
   void router.replace({ path: '/login', query: current.path === '/' ? {} : { redirect: current.fullPath } })
 }
 
+/** 统一失败处理：401 且请求携带过 Token 时清理会话并跳转登录页。 */
+export async function rejectResponse<T>(response: Response, token: string, body: ApiResponse<T> | null): Promise<ApiError> {
+  const code = body?.code ?? 'NETWORK_ERROR'
+  // 网关/代理等返回非 JSON（如后端未启动的 502）时给出可读错误
+  const message = body?.message || `请求失败（HTTP ${response.status}）`
+  if (response.status === 401 && token) {
+    clearSession()
+    window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT))
+    await redirectToLogin()
+  }
+  return new ApiError(message, code, response.status)
+}
+
 export async function request<T>(path: string, options: RequestInit = {}): Promise<T> {
   const headers = new Headers(options.headers)
   headers.set('Accept', 'application/json')
@@ -39,20 +52,14 @@ export async function request<T>(path: string, options: RequestInit = {}): Promi
     headers,
     signal: options.signal ?? AbortSignal.timeout(15_000),
   })
-  let body: ApiResponse<T>
+  let body: ApiResponse<T> | null = null
   try {
     body = await response.json()
   } catch {
-    // 网关/代理等返回非 JSON（如后端未启动的 502）时给出可读错误
-    body = { code: 'NETWORK_ERROR', message: `请求失败（HTTP ${response.status}）`, data: null as T }
+    body = null
   }
-  if (!response.ok || body.code !== 'OK') {
-    if (response.status === 401 && token) {
-      clearSession()
-      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT))
-      await redirectToLogin()
-    }
-    throw new ApiError(body.message || '请求失败', body.code, response.status)
+  if (!response.ok || !body || body.code !== 'OK') {
+    throw await rejectResponse(response, token, body)
   }
   return body.data
 }

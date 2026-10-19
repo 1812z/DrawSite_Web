@@ -47,13 +47,17 @@
   .markdown-body ul, .markdown-body ol { margin: 0.7em 0; padding-left: 1.5em; }
   .markdown-body li { margin: 0.25em 0; }
   .markdown-body li > ul, .markdown-body li > ol { margin: 0.2em 0; }
-  .markdown-body code { font-family: "Cascadia Code", Consolas, monospace; font-size: 0.85em; background: var(--muted); padding: 0.15em 0.4em; border-radius: 4px; }
-  .markdown-body pre { margin: 0.8em 0; padding: 0.9em 1em; background: var(--muted); border-radius: 8px; overflow-x: auto; }
+  /* 代码底色用半透明黑而不是固定灰：用户气泡本身是 #f4f4f4，固定灰的 --muted 在里面差 1/255，等于看不见 */
+  .markdown-body code { font-family: "Cascadia Code", Consolas, monospace; font-size: 0.85em; background: rgba(0, 0, 0, 0.06); padding: 0.15em 0.4em; border-radius: 4px; }
+  .markdown-body pre { margin: 0.8em 0; padding: 0.9em 1em; background: rgba(0, 0, 0, 0.06); border-radius: 8px; overflow-x: auto; }
   .markdown-body pre code { background: transparent; padding: 0; font-size: 0.82em; }
   .markdown-body blockquote { margin: 0.8em 0; padding: 0.1em 1em; border-left: 3px solid #d4d4d4; color: #525252; }
   .markdown-body table { width: 100%; margin: 0.8em 0; border-collapse: collapse; font-size: 0.85em; }
   .markdown-body th, .markdown-body td { border: 1px solid var(--border); padding: 0.4em 0.6em; text-align: left; }
-  .markdown-body th { background: var(--muted); font-weight: 600; }
+  .markdown-body th { background: rgba(0, 0, 0, 0.04); font-weight: 600; }
   .markdown-body hr { margin: 1.2em 0; border: none; border-top: 1px solid var(--border); }
   .markdown-body img { max-width: 100%; border-radius: 6px; }
+  /* 运行过程里的中间文本：字号要跟 11px 的步骤标题协调，不能按正文的 14px 走 */
+  .markdown-body--compact { font-size: 0.75rem; line-height: 1.6; }
+  .markdown-body--compact pre { padding: 0.5em 0.7em; }
 }

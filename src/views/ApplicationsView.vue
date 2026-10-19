@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronLeft, ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, RotateCw } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, RotateCw, Trash2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Textarea } from '@/components/ui/textarea'
+import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import * as api from '@/api/applications'
 import type { Application } from '@/api/applications'
+import { describeError } from '@/lib/errors'
 import { useWorkspaceStore } from '@/stores/workspace'
 
 const router = useRouter()
@@ -28,6 +30,11 @@ const form = reactive({ name: '', description: '' })
 const saving = ref(false)
 const formError = ref('')
 
+const deleteOpen = ref(false)
+const deleteTarget = ref<Application | null>(null)
+const deleting = ref(false)
+const deleteError = ref('')
+
 const STATUS_META: Record<string, { label: string; class: string }> = {
   INITIALIZING: { label: '初始化中', class: 'border-neutral-300 text-neutral-500' },
   READY: { label: '就绪', class: 'border-neutral-800 text-neutral-800' },
@@ -43,7 +50,7 @@ async function load() {
     total.value = result.total
   } catch (cause) {
     applications.value = []
-    error.value = cause instanceof Error ? cause.message : '加载失败'
+    error.value = describeError(cause, '加载应用失败')
   } finally {
     loading.value = false
   }
@@ -83,9 +90,38 @@ async function save() {
     dialogOpen.value = false
     await load()
   } catch (cause) {
-    formError.value = cause instanceof Error ? cause.message : '保存失败'
+    formError.value = describeError(cause, '保存应用失败')
   } finally {
     saving.value = false
+  }
+}
+
+function openDelete(application: Application) {
+  deleteTarget.value = application
+  deleteError.value = ''
+  deleteOpen.value = true
+}
+
+/**
+ * 删除应用。后端会连带清理工作区目录、会话消息、对话任务与版本记录，并自动停止回复。
+ * 初始化中返回 409 APPLICATION_BUSY；目录清理失败返回 500 WORKSPACE_DELETE_FAILED 且保留数据库记录。
+ */
+async function confirmDelete() {
+  const target = deleteTarget.value
+  if (!target || deleting.value) return
+  deleting.value = true
+  deleteError.value = ''
+  try {
+    await workspace.deleteApplication(target.id)
+    deleteOpen.value = false
+    deleteTarget.value = null
+    // 删掉当前页最后一条时回退一页，避免停在空页
+    if (applications.value.length <= 1 && page.value > 1) page.value -= 1
+    await load()
+  } catch (cause) {
+    deleteError.value = describeError(cause, '删除应用失败')
+  } finally {
+    deleting.value = false
   }
 }
 
@@ -106,7 +142,8 @@ onMounted(load)
 </script>
 
 <template>
-  <section class="mx-auto w-full max-w-5xl px-6 py-10 md:px-10">
+  <div class="min-h-0 flex-1 overflow-y-auto">
+    <section class="mx-auto w-full max-w-5xl px-6 py-10 md:px-10">
     <div class="flex items-end justify-between gap-4">
       <div>
         <h1 class="text-2xl font-medium tracking-tight">我的应用</h1>
@@ -127,24 +164,25 @@ onMounted(load)
       <Button class="mt-6" @click="openCreate"><Plus />创建应用</Button>
     </div>
     <div v-else class="mt-8 space-y-3">
-      <button v-for="application in applications" :key="application.id" class="w-full rounded-xl border p-5 text-left transition-colors hover:bg-muted" @click="open(application)">
-        <div class="flex items-start justify-between gap-4">
-          <div class="min-w-0">
+      <div v-for="application in applications" :key="application.id" class="group relative rounded-xl border transition-colors hover:bg-muted">
+        <button class="w-full p-5 text-left" @click="open(application)">
+          <div class="min-w-0 pr-20">
             <div class="flex flex-wrap items-center gap-2.5">
               <h2 class="text-sm font-medium">{{ application.name }}</h2>
               <Badge :class="STATUS_META[application.status]?.class ?? 'border-neutral-300 text-neutral-500'">{{ STATUS_META[application.status]?.label ?? application.status }}</Badge>
             </div>
             <p class="mt-2 line-clamp-2 text-sm leading-6 text-muted-foreground">{{ application.description || '暂无描述' }}</p>
           </div>
-          <div class="flex shrink-0 items-center gap-1">
-            <Button variant="ghost" size="icon" aria-label="编辑应用" @click.stop="openEdit(application)"><Pencil /></Button>
+          <div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-neutral-400">
+            <span>版本 {{ shortCommit(application.currentCommit) }}</span>
+            <span>创建于 {{ formatTime(application.createdAt) }}</span>
           </div>
+        </button>
+        <div class="absolute top-4 right-4 flex items-center gap-1">
+          <Button variant="ghost" size="icon" aria-label="编辑应用" title="编辑" @click="openEdit(application)"><Pencil /></Button>
+          <Button variant="ghost" size="icon" class="text-neutral-400 hover:text-red-600" aria-label="删除应用" title="删除" @click="openDelete(application)"><Trash2 /></Button>
         </div>
-        <div class="mt-4 flex flex-wrap items-center gap-x-5 gap-y-1 text-xs text-neutral-400">
-          <span>版本 {{ shortCommit(application.currentCommit) }}</span>
-          <span>创建于 {{ formatTime(application.createdAt) }}</span>
-        </div>
-      </button>
+      </div>
       <div v-if="totalPages > 1" class="flex items-center justify-between pt-2 text-xs text-muted-foreground">
         <span>共 {{ total }} 个应用 · 第 {{ page }} / {{ totalPages }} 页</span>
         <div class="flex items-center gap-1">
@@ -171,5 +209,18 @@ onMounted(load)
         </div>
       </form>
     </Dialog>
-  </section>
+
+    <ConfirmDialog
+      :open="deleteOpen"
+      title="删除应用"
+      :description="`确定删除「${deleteTarget?.name ?? ''}」？工作区目录、全部会话消息、对话任务与版本记录都会被清理，且无法恢复。`"
+      confirm-text="删除应用"
+      destructive
+      :loading="deleting"
+      :error="deleteError"
+      @update:open="deleteOpen = $event"
+      @confirm="confirmDelete"
+    />
+    </section>
+  </div>
 </template>

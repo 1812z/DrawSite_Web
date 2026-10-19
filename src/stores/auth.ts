@@ -52,6 +52,12 @@ export const useAuthStore = defineStore('auth', () => {
     clearSession()
   }
 
+  /** 资料编辑成功后更新本地用户信息。 */
+  function setUser(next: User): void {
+    user.value = next
+    saveUser(next)
+  }
+
   async function logout(): Promise<void> {
     try {
       if (token.value) await authApi.logout()
@@ -64,5 +70,5 @@ export const useAuthStore = defineStore('auth', () => {
 
   window.addEventListener(UNAUTHORIZED_EVENT, clear)
 
-  return { token, user, loading, isAuthenticated, isAdmin, login, register, ensureUser, logout, clear }
+  return { token, user, loading, isAuthenticated, isAdmin, login, register, ensureUser, setUser, logout, clear }
 })
