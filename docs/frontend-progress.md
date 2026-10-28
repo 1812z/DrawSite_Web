@@ -3,7 +3,7 @@
 本文档记录 `DrawSite_Web/`（平台文档中旧称 `web/`）的当前实现进度、接口对齐状态与限制。
 接口契约以仓库 `docs/backend-api.md` 与后端源码为准；本文档只描述前端。
 
-最后更新：2026-10-03
+最后更新：2026-10-19（本次仅同步文档：核对后端 10-03 18:41–19:05 的 `network` / `progress` 模块、`builtin` / `required` 字段与插件删除；前端代码未改动）
 
 ## 一、位置与运行
 
@@ -20,7 +20,9 @@
 
 已接入账号（注册 / 登录 / 会话）、应用管理、应用工作区与项目文档、**AI 基础对话（异步任务 + SSE 快照 + 取消 + 多轮历史 + 首轮自动标题）**、**运行过程与工具调用（工具模块目录 + 按次选择 + 过程展示）**、**记忆（项目 `AGENTS.md` + 用户全局单条）**、**询问细节（模型反问表单）**；个人资料与密码编辑、记忆管理、管理员用户管理与平台设置已实现。
 
-仍未实现（后端也没有接口，前端不做假接口覆盖）：Docker 构建、平台 API 测试执行器、预览与元素定位、版本恢复、发布、自动 Git 提交、工具执行回滚。
+工具模块现在共五个：`file / 文件操作`、`clarification / 询问细节`、`progress / 进度管理`（三者**强制开放**）、`network / 网络访问`、`globalMemory / 全局记忆`（二者可选，后者还受记忆开关约束）。前端目录是通用的，新增模块会自动出现，**但当前选择与计数逻辑与 `required` 语义不符**，见「六、已知缺陷」。
+
+仍未实现（后端也没有接口，前端不做假接口覆盖）：Docker 构建、平台 API 测试执行器、预览与元素定位、版本恢复、发布、自动 Git 提交、工具执行回滚。`progress.json` 的**结构化**展示前端也未做（后端已有 schema 校验与读写工具）。
 
 ## 三、接口对齐状态
 
@@ -56,6 +58,10 @@
 | `agent.ts` | `GET/POST /api/applications/{id}/conversations/{cid}/clarifications[/{qid}/answers]` | `ClarificationController` |
 | `agent.ts` | `GET /api/agent/tools`（工具**模块**目录，需登录） | `ToolController.list` |
 
+**未接（后端已实现）**：`GET /api/applications/{id}/tools` —— 后端 `catalog(app)` 直接 `return catalog()`，与全局目录完全相同，接了也没有额外信息，故不接。
+
+**后端已删除、前端无残留**：插件体系（`V9__project_plugins.sql` 建表、`V10__remove_plugins.sql` 删表，`PLUGIN_ROOT` 与项目插件配置接口一并移除）。已确认 `DrawSite_Web/src` 内 `plugin` / `插件` / `PLUGIN` **零匹配**，前端本来就没有插件 UI，无需改动。
+
 AI 对话契约以 `docs/agent.md` 为准（后端在 `docs/backend-api.md` 之外单独维护）。要点：
 
 - `runs` 接口**自行保存用户消息**，前端不得再调用 `messages` 接口保存同一条消息。
@@ -84,9 +90,11 @@ AI 对话契约以 `docs/agent.md` 为准（后端在 `docs/backend-api.md` 之�
 - **用户全局记忆 = `user_memory` 表，每用户一条、最多 4000 字符**：`GET/PUT/DELETE /api/users/me/memory`。没有记录时后端返回空 `content` + `null updatedAt`（不是 404）；PUT 会 `strip()`，允许空字符串。
   - UI 放在**设置页新增的「记忆管理」栏目**（`MemorySettingsView.vue`，用户级设置，所有登录用户可见，不需要管理员）。
 - `memoryEnabled` 语义变了：不再只是「注入不注入」，而是**控制 AI 对项目记忆文件的可见性与读写权限**。关闭时后端从目录列表与搜索里隐藏 `AGENTS.md`，并禁止读取、写入、补丁、替换、删除、移动、创建（大小写不敏感，子目录同名同样受限）。权限绑定任务，不依赖模型遵守提示词。工具栏上的开关因此从「注入记忆」改名为「记忆」，并补了说明性 `title`。
-- **工具模块现在有三个**：`file / 文件操作`、`clarification / 询问细节`、`globalMemory / 全局记忆`（按 `name` 排序，前端目录是通用的，不用改）。
+- **工具模块现在是五个**（按 `name` 排序，前端目录通用，不用改）：`file / 文件操作`、`clarification / 询问细节`、`progress / 进度管理`、`network / 网络访问`、`globalMemory / 全局记忆`。
   - `ProjectToolModule` 新增 `available(ToolContext)`，注册器 `bindModules` 对不可用的模块**静默 `continue`**，既不报错也不进模型可见的工具集。`globalMemory` 的 `available` 就是 `context.memoryEnabled()`，所以「勾了全局记忆但关掉记忆开关」是**无声失效**——前端在输入框上方的常驻提示里补了一句说明。
   - `globalMemory` 的工具级错误码：`MEMORY_CONFLICT`（并发改动，重新读取再合并）、`MEMORY_DISABLED`（任务关闭了记忆）。
+- **工具目录多了 `builtin` 与 `required` 两个字段**（`ToolView(id, name, description, builtin, required)`）：`builtin` 恒为 `true`（全部内置，无插件）；`required` 恰好是 `file` / `clarification` / `progress` 三个模块，**选中与否都会注入**（见下）。
+  - ⚠️ 前端 `ProjectTool` 目前**只有 `id/name/description`，还没接这两个字段**，因此按钮计数与「未选」文案与后端实际行为不一致（见「已知缺陷」）。
 
 ### 询问细节（`docs/agent.md` 末尾「询问细节工具」）
 
@@ -104,18 +112,36 @@ AI 对话契约以 `docs/agent.md` 为准（后端在 `docs/backend-api.md` 之�
 
 工具调用契约以 `docs/project-tools.md` 为准。前端实现要点：
 
-- ⚠️ **`GET /api/agent/tools` 返回的是工具「模块」，不是单个函数**：每项 `{id, name, description}`（当前只有 `{id:"file", name:"文件操作", description:"支持查看并编辑项目文件"}`），按 `name` 排序，**全局共用、不区分应用**，需登录。
+- ⚠️ **`GET /api/agent/tools` 返回的是工具「模块」，不是单个函数**：每项 `{id, name, description, builtin, required}`，按 `name` 排序，**全局共用、不区分应用**，需登录。`GET /api/applications/{id}/tools` 也存在，但后端 `catalog(app)` 直接 `return catalog()`，内容与全局目录**完全相同**，所以前端不必接。
   - **显示 `name`，提交 `id`**（`toolNames: ["file"]`）。选中模块即开放该模块下全部函数。
   - 后端 `select()` 只认模块 `id` 或**原来的函数名**（兼容路径），提交模块的中文 `name` 会直接 400 `TOOL_NOT_AVAILABLE`——前端不要展开到函数名，也不要拿 `name` 当提交值。
   - 目录变化时按 `id` 求交集，避免提交已移除的模块。
-- 请求侧只有两个字段：`toolsEnabled` 与 `toolNames`。后端门控实际是
-  `!FALSE.equals(toolsEnabled) && !selected.isEmpty() && (TRUE.equals(toolsEnabled) || toolNames != null)`，
-  所以：**非空 `toolNames` 本身就等于开启所选工具**；`toolNames: []` 等于关闭全部工具（按纯对话处理）；只传 `toolsEnabled: true` 且不带 `toolNames` 等于开放全部工具（旧请求兼容）。
+- **门控的真实规则**（`AgentService.start` + `ProjectToolRegistry`）：
+  - `AgentService` 里的局部变量 `toolsEnabled` 取的是 **`model.supportsTools()`（模型能力）**，不是请求里的 `toolsEnabled` 字段，读代码时别被同名误导。它只决定「走工具循环还是纯对话」以及系统提示词。
+  - 真正筛模块的是 `bindModules`：`file` / `clarification` / `progress` 三个 `required` 模块**无论选中与否都注入**；其余模块（`network`、`globalMemory`）在 `selected` 非空时要求 `selected.contains(module.id())`。
+  - `select(null)`（即**省略 `toolNames`**）直接 `return available`，等于**全部模块**。
+  - **唯一能真正关掉工具的请求值是 `toolsEnabled: false`**：`if (Boolean.FALSE.equals(request.toolsEnabled())) selectedTools = Set.of();`。注意它只清空「可选的」集合，`required` 三个模块仍会注入（因为它们是在 `bindModules` 里按 id 无条件通过的）。
+  - 所以文档里「`toolNames: []` 等于关闭全部工具」的说法**对 `required` 模块不成立**。
 - 开启工具时模型必须 `supportsTools=true`，否则 400 `TOOLS_UNSUPPORTED`。前端在**模型不支持时干脆不下发这两个字段**，并在面板里说明本次不生效、去哪儿打开。
 - **前端没有工具总开关**：是否开启是推导出来的——`supportsTools && 选中模块数 > 0`（见 `effectiveToolsEnabled`）。两个条件缺一就两个字段都不下发，等于纯对话。按钮文案直接反映这个推导结果，不需要用户手动开。
 - 未知模块 id 在提交任务前返回 400 `TOOL_NOT_AVAILABLE`（不是异步错误码）。
 - 后端限制：最多 12 轮工具循环、累计 40 次工具调用，超出按 `MODEL_REQUEST_FAILED` 结束；写入立即落盘，**取消不回滚已完成写入**，任务失败也保留已落盘修改。这两条已经写进输入框上方的说明文案。
 - 执行过程现在**可见**（见上「运行过程」）。历史上那条「写入类工具要求先拿到 sha256，所以要提醒用户一起选 readProjectFile」的提示**已经删掉**：选择粒度是模块，选中 `file` 就包含 `readProjectFile`，该提醒在模块粒度下不可能触发。
+
+### 网络访问（`docs/network-tools.md`）
+
+`network / 网络访问` 是**可选**模块（不在 `required` 里），两个函数：`httpRequest(url, method?, headers?, body?)`（GET/POST/PUT/PATCH/DELETE/HEAD/OPTIONS，默认 GET，返回 status/headers/body/truncated，非 2xx 也正常返回）与 `downloadResource(url, path, expectedHash)`（GET 下载到项目相对路径，新建 `NEW`、覆盖要现有文件 sha256，只接受 2xx，不允许二进制覆盖 `AGENTS.md` 或 `progress.json`）。
+
+- 连接超时 10 秒、总请求最多 30 秒、请求体与响应各最多 2MB、文本最多展示 40000 字符；**不自动跟随重定向、不执行网页脚本、无搜索引擎检索**。
+- 后端把网络等待放在应用事务锁之外，下载写入时重新检查任务状态与权限。
+- ⚠️ 前端 `ToolPicker` 目前**默认全选**，所以默认就会把这个模块一起开出去；而面板与输入框的文案只写「读写当前项目文件」，**没有提模型可以发起外网请求、把资源下载进项目**。这是当前文案与能力的偏差（见「已知缺陷」）。
+
+### 进度管理（`docs/project-tools.md`）
+
+`progress / 进度管理` 是**强制开放**模块，两个函数：`readProgress()` 与 `writeProgress(content, expectedHash)`。写入要过 schema 校验：最多 100000 字符，`schemaVersion` 必须是 `1.0`，`features` 数组最多 500 项，每项要有唯一非空 `id`、非空 `title`、`status` ∈ `TODO / IN_PROGRESS / READY_FOR_VERIFICATION / BLOCKED`、非空字符串数组 `acceptanceCriteria`，可选 `notes`（字符串）。校验不过返回 `IllegalArgumentException`（工具结果里的 `message`）。
+
+- 后端系统提示词里明确要求「不能把未经平台验证的结果标为测试通过」，与需求文档里「AI 不自行决定测试成功」一致；前端展示进度时也不应把 `READY_FOR_VERIFICATION` 读成「已通过」。
+- 前端目前**没有**进度结构化展示：`progress.json` 仍走「文档」标签的 JSON 格式化预览（`prettyJson`），未按 `features / status` 渲染。
 
 ### 注意：旧交接总结中的接口名有误
 
@@ -151,6 +177,7 @@ AI 对话契约以 `docs/agent.md` 为准（后端在 `docs/backend-api.md` 之�
 5. **工具调用**：`ToolPicker.vue` + `api/agent.ts` 的 `listTools`。
    - 入口是工具栏上的一个按钮，文案直接反映状态：`工具 · 模型不支持` / `工具 · 文件操作`（只有一个模块时直接报模块名）/ `工具 · 全部 N` / `工具 · 3/9` / `工具 · 未选`；真的会调用工具时按钮描边加深。**没有“关闭”这个状态**，因为开启与否是推导的（见上）。
    - 弹出面板里是「标题 + 全选 / 清空」一行，下面是**模块**列表（`GET /api/agent/tools`，进工作区时取一次，**默认全选**）。每项显示 `name`（模块名）与 `description`，点击整行切换；选中状态与提交值都是 `id`。
+   - ⚠️ 面板里那句「让模型读写当前项目文件，写入立即落盘」只覆盖了 `file` 模块的能力；`network` 能发外网请求并下载资源到项目，`progress` 会改 `progress.json`，文案没写全（见「六、已知缺陷」）。
    - 列表项的间距写在插槽内的 `div.space-y-1` 上，不能写 `viewportClass`（原因见界面约定的 ScrollArea 条目）。
    - 选择状态由前端维护（`selectedToolIds`，装的是模块 id）、随每次请求提交；切换会话不重置（组件不重建），刷新页面回到默认全选。
    - 模型不支持工具时面板内给出说明，并且**不下发** `toolsEnabled` / `toolNames`，避免 400 `TOOLS_UNSUPPORTED`。
@@ -232,7 +259,21 @@ AI 对话契约以 `docs/agent.md` 为准（后端在 `docs/backend-api.md` 之�
 - **删除类操作一律走 `components/ConfirmDialog.vue`**（`destructive` + `loading` + `error` 三个属性由调用方控制）。后端删除应用 / 会话时会自动停止回复并清理任务，前端**不要**先调 `cancel`。
 - 删除应用可能清理整个工作区目录（含依赖与产物），`deleteApplication` 单独把超时放宽到 120 秒，不用 `request` 的默认 15 秒。
 
-## 六、当前限制
+## 六、当前限制与已知缺陷
+
+### 已知缺陷（前端与最新后端不一致，代码尚未修）
+
+后端在 2026-10-03 18:41–19:05 又改过一轮（新增 `network` / `progress` 模块、工具目录加 `builtin` / `required`、删除插件体系），前端**停在 18:39**，以下三处是核对源码后确认的真实偏差：
+
+1. **「清空」工具会静默开放全部工具** —— 最严重。`ApplicationDetailView.vue` 的 `effectiveToolsEnabled = canUseTools && selectedToolIds.length > 0`，未勾选时把 `toolsEnabled` 与 `toolNames` **一起省略**（`undefined`）。但 `select(null)` 返回全部模块，且 `AgentService` 只在 `toolsEnabled === false` 时才清空，于是「模型支持工具 + 两个字段都省略」→ **全部模块被注入**，包含 `network` 与 `globalMemory`。UI 却显示「本次会按纯对话处理」。
+2. **`required` 模块永远开放**，所以「未选 = 纯对话」在模块粒度上做不到：`file` / `clarification` / `progress` 无论选中与否都注入，连 `toolNames: []` 也一样。**唯一真正的关闭值是 `toolsEnabled: false`**。
+3. **计数与文案误导**：`工具 · 2/5` 暗示只开 2 个，实际那 3 个强制模块一直在跑；「没有选择任何工具模块，本次会按纯对话处理」是错的。
+
+附带一处小的：`lib/errors.ts` 缺 `FILE_CONFLICT`、`FILE_OPERATION_INVALID`、`INTERNAL_ERROR`、`TOOL_FAILED`，这些码会出现在工具步骤结果里，现在以原始 JSON 显示。
+
+修法（待做）：`ProjectTool` 补 `builtin` / `required`；未勾选时下发 `toolsEnabled: false`；按 `required` 区分「强制开放」与「可选」，计数只算可选模块；文案区分「强制模块始终可用」与「可选模块未选」。
+
+### 其他限制
 
 - **真实联调未做**：本机后端与 PostgreSQL 未启动，AI 对话链路只通过类型与编译层面验证，未实际调用服务商。需要先配好模型与密钥再手工联调。
 - 页面刷新或切换会话时，正在 RUNNING 的任务**不会**在前端恢复订阅（后端没有“按会话列出任务”的接口）。此时回复仍在服务端继续，完成后落库，靠概览里的「刷新」取回。
@@ -267,7 +308,7 @@ AI 对话契约以 `docs/agent.md` 为准（后端在 `docs/backend-api.md` 之�
 - 记忆：项目记忆 = 工作区 `AGENTS.md`（右半「记忆」标签展示，`AGENTS.md` 已从「文档」标签列表移除）；用户级全局记忆 = 设置页「记忆管理」的单条编辑器（读取 / 保存 / 清空）。旧的 USER/APPLICATION 多条记忆列表与作用域选择已随后端 V8 一起移除。
 - 询问细节：模型反问表单（`ClarificationForm.vue`），`phase=WAITING_USER` 时在回复过程下方展示，必须答完所有问题才能提交；刷新后从询问列表恢复待回答表单。
 - AI 对话：异步任务 + SSE 流式回复、模型与思考强度选择、记忆开关、停止生成、多轮历史、首轮自动生成标题、失败诊断块与错误码提示、新内容自动滚到底、**消息（用户与助手）markdown 渲染**。
-- 工具调用：工具**模块**目录拉取、按模块多选（默认全选，提交模块 id）、开启状态由「模型支持 + 已选非空」自动推导、模型不支持时不下发并说明、不可回滚写入的常驻提示。
+- 工具调用：工具**模块**目录拉取、按模块多选（默认全选，提交模块 id）、开启状态由「模型支持 + 已选非空」自动推导、模型不支持时不下发并说明、不可回滚写入的常驻提示。后端现有五个模块（`file` / `clarification` / `progress` 强制开放，`network` / `globalMemory` 可选），目录通用故新增模块自动出现。
 - 运行过程：`RunView.phase` 阶段文案 + `RunView.steps` 折叠展示（运行中展开、跑完收起），工具调用可展开看参数与结果；历史助手消息回放已落库的 `steps`。
 - 设置：个人信息与改密、用户管理（角色、启用、重置密码）、平台设置（注册开关、模型增删改、默认模型、密钥、支持工具 / 推理开关）。
 - 界面规范：统一使用组件库的 Switch / Select / ScrollArea / Popover、整页不滚动、输入框一行起自动长高、服务状态在侧栏。
@@ -275,7 +316,9 @@ AI 对话契约以 `docs/agent.md` 为准（后端在 `docs/backend-api.md` 之�
 ### 未完成
 
 - 真实联调：后端与 PostgreSQL 未启动，全部验证只到类型与编译层面。
-- 对话之外的能力：Docker 构建、平台 API 测试执行器、预览与元素定位。
+- 对话之外的能力：Docker 构建、平台 API 测试执行器、预览与元素定位、版本恢复、发布、自动 Git 提交。
+- **工具选择语义修正**（见「六、已知缺陷」）：接 `builtin` / `required`、未勾选时下发 `toolsEnabled: false`、区分强制与可选模块、按真实能力改文案。目前「清空」会静默开放全部工具。
+- `progress.json` 结构化展示：后端已有 schema 与读写工具，前端仍是 JSON 原文预览，未按 `features / status` 渲染。
 - 工具选择状态持久化（当前是组件内存，刷新页面回到默认全选）。
 - 工具写入的回滚 / 撤销（后端明确不回滚，需先做自动 Git 提交）。
 - 刷新页面时**恢复进行中的任务**：`GET /runs/{runId}` 能拿到 `phase` / `steps`，但前端目前没有「记住上次的 runId 并重连 SSE」的路径，刷新会丢掉生成中的气泡。
