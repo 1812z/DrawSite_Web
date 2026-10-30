@@ -10,10 +10,12 @@ export interface Conversation {
 }
 
 export interface Message {
+  error?: string
   steps?: import('@/api/agent').RunStep[]
   id: string
   conversationId: string
-  role: 'USER' | 'ASSISTANT'
+  role: 'USER' | 'ASSISTANT' | 'SYSTEM'
+  kind?: 'CONTEXT_SUMMARY' | 'CONTEXT_DIVIDER' | null
   content: string
   createdAt: string
 }

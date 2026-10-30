@@ -4,7 +4,6 @@ import { useRoute, useRouter } from 'vue-router'
 import {
   FileJson,
   FileText,
-  History,
   LoaderCircle,
   MessageSquare,
   NotebookText,
@@ -23,16 +22,22 @@ import MarkdownView from '@/components/MarkdownView.vue'
 import RequirementComposer from '@/components/RequirementComposer.vue'
 import ToolPicker from '@/components/ToolPicker.vue'
 import RunProcess from '@/components/RunProcess.vue'
-import ClarificationForm from '@/components/ClarificationForm.vue'
+import ProjectProgress from '@/components/ProjectProgress.vue'
+import ProjectGit from '@/components/ProjectGit.vue'
+import ProjectTests from '@/components/ProjectTests.vue'
+import ConversationContext from '@/components/ConversationContext.vue'
+import DeploymentsView from '@/views/DeploymentsView.vue'
+import MessageQuestions from '@/components/MessageQuestions.vue'
 import * as applicationsApi from '@/api/applications'
 import * as conversationsApi from '@/api/conversations'
 import * as agentApi from '@/api/agent'
 import { describeError } from '@/lib/errors'
+import { takePendingPrompt } from '@/lib/pendingPrompt'
 import { ApiError } from '@/lib/http'
 import { getPublicSettings } from '@/api/settings'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
-import type { Application, DocumentView, Revision } from '@/api/applications'
+import type { Application, DocumentView } from '@/api/applications'
 import type { Message } from '@/api/conversations'
 import type { PublicSettings } from '@/api/settings'
 import type { ProjectTool, ReasoningEffort, RunView } from '@/api/agent'
@@ -57,7 +62,6 @@ const DOCUMENTS: { path: string; label: string; kind: 'markdown' | 'json' }[] = 
   { path: 'docs/design/overview.md', label: '概要设计', kind: 'markdown' },
   { path: 'docs/design/detail.md', label: '详细设计', kind: 'markdown' },
   { path: 'progress.json', label: '开发进度', kind: 'json' },
-  { path: 'api/openapi.json', label: 'OpenAPI 契约', kind: 'json' },
 ]
 
 // 应用
@@ -94,10 +98,49 @@ const activeRun = ref<RunView | null>(null)
 const clarificationHistory = ref<agentApi.Clarification[]>([])
 const answeringQuestions = ref(false)
 const questionError = ref('')
-const pendingQuestion = computed(() => activeRun.value?.pendingQuestion
-  ?? clarificationHistory.value.find(item => item.status === 'PENDING') ?? null)
 const streamingText = ref('')
 const runNotice = ref('')
+
+/**
+ * 询问细节挂在「发起这次询问的那条 AI 回复」下面，而不是提问的那条用户消息下面。
+ * 后端 Clarification 只有 userMessageId，没有 assistantMessageId，所以按消息顺序推断：
+ * 取该用户消息之后的第一条助手回复。上下文摘要与分隔线不参与配对。
+ * 回复还没落库（生成中、或刚答完正在续跑）时找不到锚点，这部分改挂在底部生成区；
+ * 用户消息本身没加载进来（翻页还没翻到）的不进底部，免得旧询问跑到最下面。
+ */
+const clarificationGroups = computed(() => {
+  const replyOf = new Map<string, string>()
+  const loadedUserIds = new Set<string>()
+  let waitingUserId = ''
+  for (const message of messages.value) {
+    if (message.kind === 'CONTEXT_DIVIDER' || message.kind === 'CONTEXT_SUMMARY') continue
+    if (message.role === 'USER') {
+      waitingUserId = message.id
+      loadedUserIds.add(message.id)
+      continue
+    }
+    if (message.role === 'ASSISTANT' && waitingUserId) {
+      replyOf.set(waitingUserId, message.id)
+      waitingUserId = ''
+    }
+  }
+  const anchored = new Map<string, agentApi.Clarification[]>()
+  const trailing: agentApi.Clarification[] = []
+  for (const item of clarificationHistory.value) {
+    const replyId = replyOf.get(item.userMessageId)
+    if (!replyId) {
+      if (loadedUserIds.has(item.userMessageId)) trailing.push(item)
+      continue
+    }
+    const list = anchored.get(replyId)
+    if (list) list.push(item)
+    else anchored.set(replyId, [item])
+  }
+  return { anchored, trailing }
+})
+const clarificationsOf = (messageId: string) => clarificationGroups.value.anchored.get(messageId) ?? []
+/** 生成中的回复块是否可见；它有自己的一份底部询问表单，不能再渲染第二份 */
+const liveReplyVisible = computed(() => Boolean(runRunning.value || streamingText.value || activeRun.value?.steps?.length))
 
 /**
  * 失败诊断。后端 RunView 只有 errorCode，服务商返回的原始异常在
@@ -135,13 +178,15 @@ const containerRef = ref<HTMLElement | null>(null)
 const panelOpen = ref(true)
 const panelWidth = ref(readStoredPanelWidth())
 const dragging = ref(false)
-type SideTab = 'overview' | 'documents' | 'revisions' | 'memories'
+type SideTab = 'overview' | 'documents' | 'revisions' | 'memories' | 'deployments' | 'tests'
 const sideTab = ref<SideTab>('overview')
 const sideTabs: { key: SideTab; label: string }[] = [
   { key: 'overview', label: '概览' },
   { key: 'documents', label: '文档' },
   { key: 'revisions', label: '版本' },
   { key: 'memories', label: '记忆' },
+  { key: 'deployments', label: '部署' },
+  { key: 'tests', label: '测试' },
 ]
 
 function readStoredPanelWidth(): number {
@@ -195,14 +240,8 @@ const memoryError = ref('')
 const memoryMissing = ref(false)
 
 // 版本
-const revisions = ref<Revision[]>([])
-const revisionsTotal = ref(0)
-const revisionsPage = ref(1)
-const revisionsLoading = ref(false)
-const revisionsError = ref('')
 
 const canLoadMoreMessages = computed(() => messages.value.length < messagesTotal.value)
-const canLoadMoreRevisions = computed(() => revisions.value.length < revisionsTotal.value)
 
 const availableModels = computed(() => publicSettings.value?.models ?? [])
 const selectedModel = computed(() => availableModels.value.find((item) => item.id === selectedModelId.value) ?? null)
@@ -250,7 +289,17 @@ const runStatusLabel = computed(() => {
   if (run.status === 'FAILED') return '失败'
   return '已完成'
 })
-const submitting = computed(() => sending.value || runRunning.value)
+const compressionText = ref('')
+const compressingContext = ref(false)
+function contextProgress(text: string, busy: boolean) {
+  const wasBusy = compressingContext.value
+  compressionText.value = text
+  compressingContext.value = busy
+  if (wasBusy && !busy) void refreshMessages()
+  void scrollToBottom()
+}
+watch(selectedConversationId, () => { compressionText.value = ''; compressingContext.value = false })
+const submitting = computed(() => sending.value || runRunning.value || compressingContext.value)
 /**
  * 会话没有消息时输入框居中（带引导文案与示例卡片），发出第一条后落到底部。
  * 加上 !messagesLoading 是为了切换会话时不要先居中再跳走。
@@ -281,41 +330,15 @@ function scrollToBottom(force = false) {
     followBottom = true
   })
 }
-/**
- * 全局记忆工具在 `memoryEnabled=false` 时会被后端**静默摘掉**：`ProjectToolRegistry.bindModules`
- * 里 `module.available(context)` 为 false 就 `continue`，既不报错也不进模型可见的工具集，
- * 所以勾了也不会生效。这里点一句，免得用户以为模型会去写记忆。
- * 只引用这一个模块 id，不维护工具清单；后端若改 id，这段静默失效，没有副作用。
- */
-const memoryToolNeedsMemory = computed(() => effectiveToolsEnabled.value
-  && !memoryEnabled.value
-  && selectedToolIds.value.includes('globalMemory'))
-
 const composerHint = computed(() => {
   if (runRunning.value) return '正在生成回复，可点击“停止”中断'
   if (sending.value) return '提交中…'
   if (!hasModel.value) return '平台未配置可用模型'
-  // 常驻提示：工具开启时模型会直接改写项目文件，这是不可回滚操作，不能只在空会话首屏说一次
-  if (effectiveToolsEnabled.value) {
-    const base = '已开启工具调用：模型会直接改写项目文件，写入立即落盘，取消不会回滚'
-    return memoryToolNeedsMemory.value ? `${base}；「全局记忆」已勾选但「记忆」关着，本次不会调用它` : base
-  }
   return ''
 })
 
-/** 首屏说明必须跟着真实能力走：开了工具模型就能改文件，不能再写“不会修改项目文件”。 */
-const composerSubheading = computed(() => {
-  if (effectiveToolsEnabled.value) {
-    return `描述应用需求。已开启 ${selectedToolIds.value.length} 个工具模块，模型可以读写当前项目文件；写入立即落盘，取消不会回滚已完成的修改。`
-  }
-  if (!canUseTools.value) {
-    return '描述应用需求，提交后由所选模型生成回复。当前模型未开启工具支持，本次不会修改项目文件。'
-  }
-  if (toolCatalog.value.length === 0) {
-    return '描述应用需求，提交后由所选模型生成回复。当前后端没有可用工具，模型不会修改项目文件。'
-  }
-  return '描述应用需求，提交后由所选模型生成回复。没有勾选任何工具，本次按纯对话处理。'
-})
+/** 首屏说明保持中性，不描述模型会或不会改动项目文件。 */
+const composerSubheading = '描述应用需求，提交后由所选模型生成回复。'
 
 function formatTime(value: string): string {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
@@ -625,6 +648,32 @@ async function submitMessage(content: string) {
   await subscribeRun(run.id)
 }
 
+/**
+ * 首页提交后把需求暂存在 sessionStorage 并跳到本页，这里负责把它作为会话第一条消息发出。
+ *
+ * 必须等三件事就绪：会话已选中、消息已加载完、平台模型配置已拉到。
+ * 尤其不能抢在 loadMessages 之前发 —— 那次请求会清空 messages，把乐观消息覆盖掉。
+ */
+let pendingPromptSent = false
+
+function flushPendingPrompt() {
+  if (pendingPromptSent || sending.value) return
+  const conversationId = selectedConversationId.value
+  if (!conversationId || !settingsLoaded.value) return
+  if (messagesLoading.value || messagesPage.value === 0) return
+  const content = takePendingPrompt(applicationId, conversationId)
+  if (!content) return
+  pendingPromptSent = true
+  // 先落到输入框：未配置模型等失败场景下 submitMessage 会提前返回，原文不能丢
+  draftInput.value = content
+  void submitMessage(content)
+}
+
+watch(
+  [selectedConversationId, settingsLoaded, messagesLoading, messagesPage, sending],
+  flushPendingPrompt,
+)
+
 async function subscribeRun(runId: string) {
   const conversationId = selectedConversationId.value
   const controller = new AbortController()
@@ -647,10 +696,10 @@ async function subscribeRun(runId: string) {
     if (activeRun.value?.status === 'RUNNING') await reconcileRun(runId)
   } catch (cause) {
     if (controller.signal.aborted) return
+    if (conversationId !== selectedConversationId.value) return
     if (activeRun.value?.status === 'RUNNING') {
       runNotice.value = `${describeError(cause, '事件流已中断')} 任务可能仍在服务端继续，稍后可点击“刷新消息”查看结果。`
-      if (activeRun.value.phase !== 'WAITING_USER') activeRun.value = null
-      streamingText.value = ''
+      preserveInterruptedRun()
     }
   } finally {
     if (streamController === controller) streamController = null
@@ -661,6 +710,9 @@ function finalizeRun(snapshot: RunView) {
   if (snapshot.conversationId !== selectedConversationId.value) return
   clarificationHistory.value = clarificationHistory.value.map(item => item.runId === snapshot.id && item.status === 'PENDING'
     ? { ...item, status: 'CANCELLED' as const } : item)
+  const previous = activeRun.value?.id === snapshot.id ? activeRun.value : null
+  snapshot = { ...snapshot, content: snapshot.content || previous?.content || streamingText.value,
+    steps: snapshot.steps?.length ? snapshot.steps : previous?.steps ?? [] }
   if (snapshot.status === 'SUCCEEDED') {
     // 手动刷新可能已把这条回复拉回来，按 ID 去重避免重复渲染
     if (snapshot.assistantMessageId && !messages.value.some((item) => item.id === snapshot.assistantMessageId)) {
@@ -697,7 +749,8 @@ function finalizeRun(snapshot: RunView) {
     })
     runNotice.value = ''
   }
-  activeRun.value = snapshot.status === 'SUCCEEDED' ? null : snapshot
+  if (snapshot.status !== 'SUCCEEDED') preserveInterruptedRun(snapshot)
+  activeRun.value = null
   streamingText.value = ''
 }
 
@@ -719,8 +772,7 @@ async function reconcileRun(runId: string) {
   }
   if (activeRun.value?.status === 'RUNNING') {
     runNotice.value = '事件流已结束但任务状态未确认，稍后可点击“刷新消息”查看结果。'
-    activeRun.value = null
-    streamingText.value = ''
+    preserveInterruptedRun()
   }
 }
 
@@ -737,9 +789,21 @@ async function stopRun() {
   }
 }
 
-async function submitAnswers(answers: agentApi.DetailAnswer[]) {
-  const item = pendingQuestion.value
-  if (!item || answeringQuestions.value) return
+function preserveInterruptedRun(run = activeRun.value) {
+  if (!run) return
+  const id = run.assistantMessageId ?? `interrupted-${run.id}`
+  if (!messages.value.some(message => message.id === id)) {
+    messages.value.push({ id, conversationId: run.conversationId, role: 'ASSISTANT',
+      content: run.content || streamingText.value, steps: run.steps ?? [],
+      createdAt: run.finishedAt ?? new Date().toISOString(),
+      error: run.status === 'CANCELLED' ? '已停止，保留已生成内容' : '回复未完整结束，保留已生成内容' })
+  }
+  activeRun.value = null
+  streamingText.value = ''
+}
+
+async function submitAnswers(item: agentApi.Clarification, answers: agentApi.DetailAnswer[]) {
+  if (answeringQuestions.value) return
   const conversationId = selectedConversationId.value
   answeringQuestions.value = true
   questionError.value = ''
@@ -799,33 +863,12 @@ function prettyJson(content: string): string {
   }
 }
 
-async function loadRevisions(reset = false) {
-  if (reset) {
-    revisions.value = []
-    revisionsPage.value = 1
-  }
-  revisionsLoading.value = true
-  revisionsError.value = ''
-  try {
-    const result = await applicationsApi.listRevisions(applicationId, revisionsPage.value, 20)
-    revisions.value.push(...result.records)
-    revisionsTotal.value = result.total
-    revisionsPage.value += 1
-  } catch (cause) {
-    revisionsError.value = cause instanceof Error ? cause.message : '加载版本失败'
-  } finally {
-    revisionsLoading.value = false
-  }
-}
 
 function openSideTab(tab: SideTab) {
   panelOpen.value = true
   sideTab.value = tab
   if (tab === 'documents' && !activeDocument.value && !documentLoading.value) {
     void loadDocument(DOCUMENTS[0].path)
-  }
-  if (tab === 'revisions' && revisions.value.length === 0) {
-    void loadRevisions()
   }
   if (tab === 'memories' && !memoryDocument.value && !memoryLoading.value) {
     void loadMemory()
@@ -906,7 +949,9 @@ onMounted(() => {
             </div>
             <div v-if="messages.length > 0" class="mb-8 space-y-5">
               <!-- 我的消息靠右，平台助手回复靠左 -->
-              <div v-for="message in messages" :key="message.id" class="flex gap-3" :class="message.role === 'USER' ? 'flex-row-reverse' : ''">
+              <template v-for="message in messages" :key="message.id">
+              <div v-if="message.kind === 'CONTEXT_DIVIDER'" class="flex items-center gap-3 py-3 text-xs text-neutral-400"><span class="h-px flex-1 bg-neutral-200" /><span>会话已压缩</span><span class="h-px flex-1 bg-neutral-200" /></div>
+              <div v-else class="flex gap-3" :class="message.role === 'USER' ? 'flex-row-reverse' : ''">
                 <div
                   v-if="message.role === 'USER'"
                   class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-[#ececec] text-[10px] font-medium"
@@ -926,16 +971,27 @@ onMounted(() => {
                     :class="message.role === 'USER' ? 'max-w-[85%] rounded-2xl rounded-tr-sm bg-[#f4f4f4] px-3.5 py-2' : ''"
                   >
                     <RunProcess v-if="message.role === 'ASSISTANT'" :steps="message.steps ?? []" />
+                    <p v-if="message.error" class="mb-2 text-xs text-red-600">{{ message.error }}</p>
                     <div :class="message.steps?.length ? 'mt-2' : ''">
                       <MarkdownView :content="message.content" />
                     </div>
                   </div>
+                  <!-- 询问挂在发起询问的那条 AI 回复下面，回答后也不跟用户消息挤在一起 -->
+                  <MessageQuestions v-if="message.role === 'ASSISTANT'"
+                    :items="clarificationsOf(message.id)"
+                    :submitting="answeringQuestions" :error="questionError" @submit="submitAnswers" />
                 </div>
               </div>
+              </template>
+            </div>
+
+            <div v-if="compressingContext" class="mb-8 flex gap-3">
+              <div class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-[#ececec] text-[10px] font-medium">{{ aiLabel.charAt(0) }}</div>
+              <div class="min-w-0 flex-1"><div class="flex items-center gap-2"><p class="text-xs font-medium">{{ aiLabel }}</p><span class="flex items-center gap-1.5 text-[11px] text-neutral-400"><LoaderCircle class="size-3 animate-spin" />正在压缩会话</span></div><div class="mt-1.5 text-neutral-800"><MarkdownView v-if="compressionText" :content="compressionText" /><p v-else class="text-sm text-neutral-400">正在生成接续摘要…</p></div></div>
             </div>
 
             <!-- 生成中的回复：服务端只保存完成的回复，失败与取消不落库 -->
-            <div v-if="runRunning || streamingText || activeRun?.steps?.length" class="mb-8 flex gap-3">
+            <div v-if="liveReplyVisible" class="mb-8 flex gap-3">
               <div class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-[#ececec] text-[10px] font-medium" :title="aiLabel">{{ aiLabel.charAt(0) }}</div>
               <div class="min-w-0 flex-1">
                 <div class="flex items-center gap-2">
@@ -947,21 +1003,23 @@ onMounted(() => {
                   <MarkdownView :content="streamingText" />
                 </div>
                 <p v-else-if="!activeRun?.steps?.length" class="mt-1.5 text-sm leading-7 text-neutral-400">等待模型响应…</p>
+                <MessageQuestions v-if="clarificationGroups.trailing.length"
+                  :items="clarificationGroups.trailing"
+                  :submitting="answeringQuestions" :error="questionError" @submit="submitAnswers" />
+              </div>
+            </div>
+
+            <!-- 回复还没落库但也没有生成中块时（例如刷新后停在等待回答），询问也得有地方落 -->
+            <div v-else-if="clarificationGroups.trailing.length" class="mb-8 flex gap-3">
+              <div class="mt-0.5 flex size-7 shrink-0 items-center justify-center rounded-full bg-[#ececec] text-[10px] font-medium" :title="aiLabel">{{ aiLabel.charAt(0) }}</div>
+              <div class="min-w-0 flex-1">
+                <p class="text-xs font-medium">{{ aiLabel }}</p>
+                <MessageQuestions :items="clarificationGroups.trailing"
+                  :submitting="answeringQuestions" :error="questionError" @submit="submitAnswers" />
               </div>
             </div>
 
             <!-- 失败诊断：后端只回传错误码，这里把客户端已知信息全部摊开 -->
-            <ClarificationForm v-if="pendingQuestion" :key="pendingQuestion.id" :item="pendingQuestion"
-              :submitting="answeringQuestions" :error="questionError" @submit="submitAnswers" />
-            <details v-for="item in clarificationHistory.filter(value => value.status === 'ANSWERED')" :key="item.id"
-              class="mb-3 mt-3 rounded-lg border px-3 py-2 text-xs text-neutral-500">
-              <summary class="cursor-pointer">已回答询问细节</summary>
-              <div v-for="(question, index) in item.questions" :key="index" class="mt-3 space-y-1">
-                <p>{{ question.question }}</p>
-                <p>{{ item.answers.find(answer => answer.questionIndex === index)?.selectedOptions.join('、') }}</p>
-                <p class="whitespace-pre-wrap">{{ item.answers.find(answer => answer.questionIndex === index)?.customText }}</p>
-              </div>
-            </details>
             <div v-if="runFailure" role="alert" class="mb-4 rounded-lg border border-red-200 bg-red-50/70 px-3.5 py-3">
               <p class="text-xs font-medium text-red-700">{{ runFailure.title }}</p>
               <dl class="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-[11px] leading-5">
@@ -1087,10 +1145,8 @@ onMounted(() => {
               <div class="flex items-center justify-between"><span class="text-xs text-muted-foreground">更新时间</span><span class="text-xs">{{ formatTime(application.updatedAt) }}</span></div>
             </div>
 
-            <div class="mt-6 rounded-xl border border-dashed p-6 text-center">
-              <p class="text-sm text-neutral-400">概览内容占位</p>
-              <p class="mt-2 text-xs leading-6 text-muted-foreground">后续将在这里展示项目进度摘要、关键指标与快捷入口。</p>
-            </div>
+            <ConversationContext :application-id="applicationId" :conversation-id="selectedConversationId || ''" :model-id="selectedModelId" :memory-enabled="memoryEnabled" :running="runRunning" :revision="messages.length" @progress="contextProgress" @completed="refreshMessages" />
+            <ProjectProgress class="mt-6" :application-id="applicationId" :key="messages.length" />
           </div>
           <!-- 文档 -->
           <div v-else-if="sideTab === 'documents'">
@@ -1113,32 +1169,22 @@ onMounted(() => {
                 <p v-if="!activeDocument.content" class="py-6 text-center text-xs text-muted-foreground">文档内容为空</p>
                 <template v-else>
                   <p class="mb-3 font-mono text-[11px] text-neutral-400">{{ activeDocument.path }}</p>
-                  <MarkdownView v-if="DOCUMENTS.find((item) => item.path === activeDocument?.path)?.kind === 'markdown'" :content="activeDocument.content" />
+                  <ProjectProgress v-if="activeDocument.path === 'progress.json'" :application-id="applicationId" :key="messages.length" />
+                  <MarkdownView v-else-if="DOCUMENTS.find((item) => item.path === activeDocument?.path)?.kind === 'markdown'" :content="activeDocument.content" />
                   <pre v-else class="overflow-x-auto rounded-lg bg-[#f8f8f8] p-3 font-mono text-[11px] leading-5">{{ prettyJson(activeDocument.content) }}</pre>
                 </template>
               </template>
             </div>
           </div>
           <!-- 版本 -->
+          <div v-else-if="sideTab === 'deployments'">
+            <DeploymentsView :project-id="applicationId" :key="applicationId" />
+          </div>
+          <div v-else-if="sideTab === 'tests'">
+            <ProjectTests :application-id="applicationId" />
+          </div>
           <div v-else-if="sideTab === 'revisions'">
-            <p v-if="revisionsLoading && revisions.length === 0" class="flex items-center gap-2 py-6 text-xs text-muted-foreground"><LoaderCircle class="animate-spin" />加载版本…</p>
-            <p v-else-if="revisionsError && revisions.length === 0" class="py-6 text-xs text-red-600">{{ revisionsError }}</p>
-            <div v-else-if="revisions.length === 0" class="flex flex-col items-center py-8 text-center">
-              <History class="mb-3 size-5 text-neutral-300" />
-              <p class="text-sm text-neutral-400">暂无版本记录</p>
-            </div>
-            <div v-else class="space-y-2.5">
-              <div v-for="revision in revisions" :key="revision.id" class="rounded-lg border bg-white p-3">
-                <div class="flex items-center justify-between gap-2">
-                  <p class="font-mono text-xs font-medium">{{ shortCommit(revision.commitHash) }}</p>
-                  <p class="text-[11px] text-neutral-400">{{ formatTime(revision.createdAt) }}</p>
-                </div>
-                <p class="mt-1.5 text-xs leading-5 text-muted-foreground">{{ revision.summary || '初始版本' }}</p>
-              </div>
-              <Button v-if="canLoadMoreRevisions" variant="outline" size="sm" class="w-full" :disabled="revisionsLoading" @click="loadRevisions()">
-                <LoaderCircle v-if="revisionsLoading" class="animate-spin" />加载更多版本
-              </Button>
-            </div>
+            <ProjectGit :application-id="applicationId" :running="runRunning" :key="messages.length" @restored="refreshOverview" />
           </div>
           <!--
             记忆：项目记忆就是工作区里的 AGENTS.md，不是数据库记录（见 docs/memory.md）。

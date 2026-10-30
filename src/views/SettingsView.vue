@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, reactive, ref } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import { KeyRound, LoaderCircle, UserRound } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { Button } from '@/components/ui/button'
@@ -10,11 +10,12 @@ import * as usersApi from '@/api/users'
 import AdminUsersView from '@/views/AdminUsersView.vue'
 import AdminSettingsView from '@/views/AdminSettingsView.vue'
 import MemorySettingsView from '@/views/MemorySettingsView.vue'
+import AdminDockerView from '@/views/AdminDockerView.vue'
 
 const auth = useAuthStore()
 const router = useRouter()
 
-type SettingTab = 'profile' | 'memory' | 'users' | 'settings'
+type SettingTab = 'profile' | 'memory' | 'users' | 'settings' | 'docker'
 const tabs = computed(() => {
   // 记忆管理是用户级设置（/users/me/memory），所有登录用户都有，和平台管理无关
   const list: { key: SettingTab; label: string }[] = [
@@ -22,11 +23,11 @@ const tabs = computed(() => {
     { key: 'memory', label: '记忆管理' },
   ]
   if (auth.isAdmin) {
-    list.push({ key: 'users', label: '用户管理' }, { key: 'settings', label: '平台管理' })
+    list.push({ key: 'users', label: '用户管理' }, { key: 'settings', label: '平台管理' }, { key: 'docker', label: 'Docker 管理' })
   }
   return list
 })
-const activeTab = ref<SettingTab>('profile')
+const activeTab = ref<SettingTab>(auth.isAdmin && useRoute().query.tab === 'docker' ? 'docker' : 'profile')
 
 // 资料编辑
 const profileForm = reactive({
@@ -162,7 +163,8 @@ async function savePassword() {
       <AdminUsersView v-else-if="activeTab === 'users'" />
 
       <!-- 平台管理（仅管理员标签可见） -->
-      <AdminSettingsView v-else />
+      <AdminSettingsView v-else-if="activeTab === 'settings'" />
+      <AdminDockerView v-else-if="activeTab === 'docker' && auth.isAdmin" embedded />
     </div>
   </div>
 </template>

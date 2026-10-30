@@ -30,6 +30,7 @@ export interface DetailAnswer {
   customText: string
 }
 export interface Clarification {
+  userMessageId: string
   id: string
   runId: string
   conversationId: string

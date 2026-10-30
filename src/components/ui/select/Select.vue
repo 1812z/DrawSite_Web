@@ -50,7 +50,7 @@ const modelValue = defineModel<string>({ default: '' })
         position="popper"
         :side-offset="4"
         :body-lock="false"
-        :class="cn('z-50 max-h-72 min-w-[var(--reka-select-trigger-width)] overflow-hidden rounded-lg border bg-background p-1 shadow-md outline-none', props.contentClass)"
+        :class="cn('z-[70] max-h-72 min-w-[var(--reka-select-trigger-width)] overflow-hidden rounded-lg border bg-background p-1 shadow-md outline-none', props.contentClass)"
       >
         <SelectViewport>
           <SelectItem

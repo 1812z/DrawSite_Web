@@ -71,7 +71,7 @@ function onOpenChange(value: boolean) {
         :side="side"
         :align="align"
         :side-offset="sideOffset"
-        :class="cn('z-50 rounded-xl border bg-background p-3 shadow-lg outline-none', props.class)"
+        :class="cn('z-[70] rounded-xl border bg-background p-3 shadow-lg outline-none', props.class)"
       >
         <slot />
       </PopoverContent>

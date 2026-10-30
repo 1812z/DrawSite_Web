@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { onMounted, ref, watch } from 'vue'
+import { computed, onMounted, ref, watch } from 'vue'
+import type { Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Blocks, ChevronRight, FolderOpen, House, LoaderCircle, LogOut, MessageSquare, PanelLeft, Pencil, Plus, Settings, Trash2, X } from '@lucide/vue'
+import { Blocks, ChevronRight, FolderOpen, House, LoaderCircle, LogOut, MessageSquare, PanelLeft, Pencil, Plus, Server, Settings, Trash2, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -18,10 +19,15 @@ const system = useSystemStore()
 const auth = useAuthStore()
 const workspace = useWorkspaceStore()
 const sidebarOpen = ref(false)
-const navigation = [
-  { to: '/', label: '工作台', icon: House },
-  { to: '/applications', label: '我的应用', icon: FolderOpen },
-]
+/** 管理员多一个「部署管理」入口：平台容器与已上线站点都在里面 */
+const navigation = computed(() => {
+  const items: { to: string; label: string; icon: Component }[] = [
+    { to: '/', label: '工作台', icon: House },
+    { to: '/applications', label: '我的应用', icon: FolderOpen },
+  ]
+  if (auth.isAdmin) items.push({ to: '/admin/deployments', label: '部署管理', icon: Server })
+  return items
+})
 watch(() => route.path, () => { sidebarOpen.value = false })
 onMounted(() => {
   void system.checkHealth()

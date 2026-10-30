@@ -77,7 +77,7 @@ function toggle(id: string) {
     <div class="flex items-start justify-between gap-3">
       <div class="min-w-0">
         <p class="text-xs font-medium">工具调用</p>
-        <p class="mt-0.5 text-[11px] leading-4 text-muted-foreground">让模型读写当前项目文件，写入立即落盘</p>
+        <p class="mt-0.5 text-[11px] leading-4 text-muted-foreground">让模型读写当前项目文件</p>
       </div>
       <div v-if="supported && tools.length > 0" class="flex shrink-0 items-center gap-0.5">
         <Button variant="ghost" size="sm" class="h-6 gap-0 px-1.5 text-[11px] font-normal text-neutral-500" @click="emitSelection(new Set(tools.map((tool) => tool.id)))">全选</Button>

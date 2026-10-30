@@ -75,10 +75,10 @@ function duration(step: RunStep): string {
         <!-- 工具的参数与结果最多各 20000 字符，必须默认折叠、按需展开 -->
         <details v-if="step.type === 'TOOL' && step.content" class="mt-1">
           <summary class="cursor-pointer list-none text-[10px] text-neutral-400 select-none hover:text-neutral-600 [&::-webkit-details-marker]:hidden">参数与结果</summary>
-          <pre class="mt-1 max-h-80 overflow-auto rounded-md bg-black/[0.04] px-2 py-1.5 font-mono text-[10px] leading-4 whitespace-pre-wrap break-words">{{ step.content }}</pre>
+          <pre class="mt-1 max-h-80 overflow-auto rounded-md bg-black/[0.04] px-2 py-1.5 font-mono text-[10px] leading-4 whitespace-pre-wrap break-words" v-memo="[step.content]">{{ step.content }}</pre>
         </details>
         <div v-else-if="step.content" class="mt-1 max-h-60 overflow-y-auto">
-          <MarkdownView class="markdown-body--compact" :content="step.content" />
+          <MarkdownView v-memo="[step.content]" class="markdown-body--compact" :content="step.content" />
         </div>
       </li>
     </ol>
