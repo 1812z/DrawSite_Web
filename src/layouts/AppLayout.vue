@@ -37,6 +37,21 @@ const navigation = computed(() => {
   return items
 })
 watch(() => route.path, () => { sidebarOpen.value = false })
+
+/** 详情页会从右侧叠出一个侧边栏开关，顶栏右侧要给它让位 */
+const hasSidePanel = computed(() => /^\/applications\/[^/]+$/.test(route.path))
+
+/** 移动端顶栏标题：详情页显示应用名，其余按路由给固定文案 */
+const mobileTitle = computed(() => {
+  const match = /^\/applications\/([^/]+)$/.exec(route.path)
+  if (match) return workspace.applications.find((item) => item.id === match[1])?.name ?? '应用'
+  if (route.path === '/applications') return '我的应用'
+  if (route.path === '/admin/deployments') return '部署管理'
+  if (route.path === '/settings') return '设置'
+  if (route.path === '/') return '工作台'
+  return '绘站'
+})
+
 onMounted(() => {
   void system.checkHealth()
   if (auth.isAuthenticated) void workspace.refreshApplications()
@@ -151,7 +166,7 @@ async function confirmDeleteConversation() {
       class="sb-aside fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r bg-[#f8f8f8] p-3 md:static md:translate-x-0"
       :data-collapsed="sidebarCollapsed ? 'true' : 'false'"
       :class="[
-        sidebarOpen ? 'translate-x-0 shadow-2xl md:shadow-none' : 'md:shadow-none -translate-x-full',
+        sidebarOpen ? 'translate-x-0 shadow-2xl md:shadow-none' : '-translate-x-full pointer-events-none md:pointer-events-auto md:shadow-none',
         sidebarCollapsed ? 'md:w-[68px] md:px-1.5' : 'md:w-60',
       ]"
     >
@@ -271,9 +286,18 @@ async function confirmDeleteConversation() {
       </div>
     </aside>
     <div class="relative flex min-w-0 flex-1 flex-col">
-      <!-- 顶栏已移除；移动端保留一个悬浮导航按钮 -->
-      <Button variant="ghost" size="icon" class="absolute top-3 left-3 z-20 md:hidden" aria-label="打开导航" @click="sidebarOpen = true"><PanelLeft /></Button>
-      <main class="flex min-h-0 flex-1 flex-col pt-14 md:pt-0"><slot /></main>
+      <!--
+        移动端顶栏：以前只悬浮一个汉堡按钮，右侧整条都是空的。
+        现在做成真正的工具栏，右侧留出宽度给详情页的侧边栏开关（由 SidePanel 固定定位叠上来）。
+      -->
+      <header
+        class="flex h-12 shrink-0 items-center gap-1 border-b bg-background pl-2 md:hidden"
+        :class="hasSidePanel ? 'pr-12' : 'pr-2'"
+      >
+        <Button variant="ghost" size="icon" aria-label="打开导航" @click="sidebarOpen = true"><PanelLeft /></Button>
+        <span class="min-w-0 flex-1 truncate text-sm font-medium">{{ mobileTitle }}</span>
+      </header>
+      <main class="flex min-h-0 flex-1 flex-col"><slot /></main>
     </div>
 
     <Dialog :open="renameOpen" title="重命名会话" @update:open="renameOpen = $event">
@@ -305,12 +329,12 @@ async function confirmDeleteConversation() {
 </template>
 
 <style scoped>
-/* 同一条缓动曲线（iOS 式快出慢收）驱动宽度、内边距、位移，收起/展开才是"滑动"而不是"跳变" */
+/* 缓动曲线 */
 .sb-aside {
   transition:
     width 320ms cubic-bezier(0.32, 0.72, 0, 1),
     padding 320ms cubic-bezier(0.32, 0.72, 0, 1),
-    transform 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    translate 300ms cubic-bezier(0.32, 0.72, 0, 1),
     box-shadow 300ms ease;
 }
 

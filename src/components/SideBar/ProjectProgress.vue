@@ -1,10 +1,16 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { onMounted, ref, watch } from 'vue'
 import { getProgress } from '@/api/applications'
 import type { ProgressSummary } from '@/api/applications'
 import RefreshButton from '@/components/RefreshButton.vue'
 
-const props = defineProps<{ applicationId: string }>()
+/**
+ * 开发进度是**应用级**数据，跟会话无关：
+ * 切换会话时不需要重新拉取，否则每切一次就闪一次（还会因为 messages 清空/回填触发两次请求）。
+ * 只有一轮任务跑完（running: true → false）时进度才可能变化，那时刷新一次即可。
+ * 刷新期间保留上一次的数据，不显示空态，避免闪烁。
+ */
+const props = defineProps<{ applicationId: string; running?: boolean }>()
 const progress = ref<ProgressSummary | null>(null)
 const loading = ref(false)
 const error = ref('')
@@ -18,6 +24,7 @@ async function load() {
   finally { loading.value = false }
 }
 onMounted(load)
+watch(() => props.running, (next, previous) => { if (previous && !next) void load() })
 </script>
 
 <template>

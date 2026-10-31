@@ -84,7 +84,7 @@ function isMarkdown(path: string | undefined): boolean {
         <p v-if="!activeDocument.content" class="py-6 text-center text-xs text-muted-foreground">文档内容为空</p>
         <template v-else>
           <p class="mb-3 font-mono text-[11px] text-neutral-400">{{ activeDocument.path }}</p>
-          <ProjectProgress v-if="activeDocument.path === 'progress.json'" :application-id="applicationId" :key="revision" />
+          <ProjectProgress v-if="activeDocument.path === 'progress.json'" :application-id="applicationId" :running="running" />
           <MarkdownView v-else-if="isMarkdown(activeDocument.path)" :content="activeDocument.content" />
           <pre v-else class="overflow-x-auto rounded-lg bg-[#f8f8f8] p-3 font-mono text-[11px] leading-5">{{ prettyJson(activeDocument.content) }}</pre>
         </template>

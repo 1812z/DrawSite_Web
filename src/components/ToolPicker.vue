@@ -44,7 +44,7 @@ const label = computed(() => {
   if (props.selected.length === 0) return '工具 · 未选'
   // 只有一个模块时直接报模块名，比“全部 1”可读
   if (props.tools.length === 1) return `工具 · ${props.tools[0].name}`
-  if (allSelected.value) return `工具 · 全部 ${props.tools.length}`
+  if (allSelected.value) return `工具 · 全部`
   return `工具 · ${props.selected.length}/${props.tools.length}`
 })
 

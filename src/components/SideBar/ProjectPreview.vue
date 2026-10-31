@@ -102,6 +102,7 @@ onUnmounted(() => selector?.dispose())
     </ul>
     <div class="flex gap-2"><input v-model="url" aria-label="预览地址" placeholder="https://…" class="min-w-0 flex-1 rounded-md border px-3 py-2 text-xs" /><Button size="sm" :disabled="!url" @click="preview">实时预览</Button><Button size="sm" variant="outline" :disabled="!url" @click="open">打开</Button></div>
     <div class="flex items-center justify-between gap-3"><div><h3 class="text-sm font-medium">圈选修改</h3><p class="mt-1 text-xs text-neutral-500">选定网页元素后Agent可以更精准地修改网页</p></div><Switch v-model="selecting" :disabled="!opened" /></div>
+    <p v-if="selecting" class="rounded-lg border border-amber-200 bg-amber-50/70 px-3 py-2 text-xs leading-5 text-amber-700">圈选中：点一下立即选中，按住拖动可圈定一块区域。此时预览区暂停滚动，需要滚动请先关闭圈选。</p>
     <p v-if="error" class="text-xs text-red-600">{{ error }}</p>
     <iframe v-if="opened" ref="frame" :src="opened" title="应用实时预览" class="h-[65vh] min-h-96 w-full rounded-lg border bg-white" sandbox="allow-scripts allow-same-origin allow-forms allow-modals" referrerpolicy="no-referrer" @load="loaded" />
     <div v-else class="flex h-80 items-center justify-center rounded-lg border text-xs text-neutral-400">选择已启动服务或静态站点，点击“实时预览”在下方嵌入查看，或点击“打开”跳转新标签</div>

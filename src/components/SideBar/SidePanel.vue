@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, markRaw, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, markRaw, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import type { Component, ComponentPublicInstance } from 'vue'
 import { PanelRightClose, PanelRightOpen } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
@@ -93,12 +93,19 @@ const activeProps = computed<Record<string, unknown>>(() => {
       return base
   }
 })
-const panelOpen = ref(true)
+/**
+ * 小屏（< md）不做分屏：面板改成右侧抽屉，默认收起，点顶栏右侧的按钮滑出；
+ * 用 matchMedia 而不是纯 CSS 断点，因为宽度还要在「百分比分屏」和「固定抽屉」之间切换。
+ */
+const MOBILE_QUERY = '(max-width: 767px)'
+const mobileQuery = window.matchMedia(MOBILE_QUERY)
+const isMobile = ref(mobileQuery.matches)
+const panelOpen = ref(!isMobile.value)
 /**
  * 收起动画期间内容还要在场才能淡出，动画结束后再卸载：
  * 这样部署轮询、预览 iframe 这些组件不会在窄轨里继续跑。
  */
-const bodyVisible = ref(true)
+const bodyVisible = ref(!isMobile.value)
 const COLLAPSE_MS = 320
 let bodyTimer: number | null = null
 
@@ -116,6 +123,9 @@ function readStoredPanelWidth(): number {
   if (!Number.isFinite(value)) return DEFAULT_PANEL_PCT
   return Math.min(MAX_PANEL_PCT, Math.max(MIN_PANEL_PCT, value))
 }
+
+/** 宽屏走百分比分屏（可拖拽），小屏是固定宽度的抽屉，宽度交给 class */
+const asideStyle = computed(() => (isMobile.value ? {} : { width: panelOpen.value ? `${panelWidth.value}%` : '2.75rem' }))
 
 function clearBodyTimer() {
   if (bodyTimer !== null) {
@@ -138,6 +148,19 @@ function closePanel() {
     bodyTimer = null
   }, COLLAPSE_MS)
 }
+
+/** 跨断点时重置状态：小屏一律收起（把整幅宽度让给对话），回到宽屏恢复分屏 */
+function syncMobile(event?: MediaQueryListEvent) {
+  const mobile = event ? event.matches : mobileQuery.matches
+  if (mobile === isMobile.value) return
+  isMobile.value = mobile
+  if (mobile) closePanel()
+  else openPanel()
+}
+
+onMounted(() => {
+  mobileQuery.addEventListener('change', syncMobile)
+})
 
 function openTab(next: SideTab) {
   openPanel()
@@ -202,13 +225,14 @@ function stopResize() {
 onBeforeUnmount(() => {
   stopResize()
   clearBodyTimer()
+  mobileQuery.removeEventListener('change', syncMobile)
 })
 </script>
 
 <template>
-  <!-- 拖拽分隔条：收起时宽度归零，不占位也不可拖 -->
+  <!-- 拖拽分隔条：仅宽屏分屏时有意义；收起时宽度归零，不占位也不可拖 -->
   <div
-    class="sp-handle shrink-0 cursor-col-resize bg-neutral-200 hover:bg-neutral-400"
+    class="sp-handle hidden shrink-0 cursor-col-resize bg-neutral-200 hover:bg-neutral-400 md:block"
     :class="[panelOpen ? 'w-1 opacity-100' : 'pointer-events-none w-0 opacity-0', dragging ? 'bg-neutral-400' : '']"
     role="separator"
     aria-orientation="vertical"
@@ -216,25 +240,44 @@ onBeforeUnmount(() => {
     @mousedown.prevent="startResize"
   />
 
+  <!-- 小屏入口：叠在移动端顶栏右端（AppLayout 的 header 已给它留出 pr-12） -->
+  <Button
+    v-if="isMobile"
+    variant="ghost"
+    size="icon"
+    class="fixed top-1.5 right-1.5 z-20 md:hidden"
+    aria-label="打开侧边栏"
+    title="打开侧边栏"
+    :aria-expanded="panelOpen"
+    @click="openPanel"
+  ><PanelRightOpen /></Button>
+
+  <!-- 小屏抽屉的遮罩：点空白处收起 -->
+  <Transition name="sp-fade">
+    <div v-if="isMobile && panelOpen" class="fixed inset-0 z-30 bg-black/25 md:hidden" @click="closePanel" />
+  </Transition>
+
   <aside
-    class="sp-aside relative flex min-h-0 shrink-0 flex-col overflow-hidden border-l bg-[#fafafa]"
+    class="sp-aside fixed inset-y-0 right-0 z-40 flex w-[86vw] max-w-sm min-h-0 shrink-0 flex-col overflow-hidden border-l bg-[#fafafa] md:static md:right-auto md:z-auto md:w-auto md:max-w-none md:translate-x-0"
+    :class="panelOpen ? 'translate-x-0' : 'translate-x-full'"
     :data-open="panelOpen ? 'true' : 'false'"
     :data-dragging="dragging ? 'true' : 'false'"
-    :style="{ width: panelOpen ? `${panelWidth}%` : '2.75rem' }"
+    :data-mobile="isMobile ? 'true' : 'false'"
+    :style="asideStyle"
   >
     <Transition name="sp-body">
       <div v-if="bodyVisible" class="sp-body flex min-h-0 flex-1 flex-col">
-        <div class="flex h-11 shrink-0 items-center justify-between border-b px-3">
-          <nav class="flex items-center gap-1 text-sm" aria-label="侧边栏标签">
+        <div class="flex h-11 shrink-0 items-center justify-between gap-2 border-b px-3">
+          <nav class="flex min-w-0 items-center gap-1 overflow-x-auto text-sm" aria-label="侧边栏标签">
             <button
               v-for="item in tabs"
               :key="item.key"
               :aria-current="tab === item.key ? 'page' : undefined"
-              :class="['rounded-md px-2.5 py-1 transition-colors', tab === item.key ? 'bg-[#eaeaea] font-medium' : 'text-neutral-500 hover:bg-black/5']"
+              :class="['shrink-0 whitespace-nowrap rounded-md px-2.5 py-1 transition-colors', tab === item.key ? 'bg-[#eaeaea] font-medium' : 'text-neutral-500 hover:bg-black/5']"
               @click="openTab(item.key)"
             >{{ item.label }}</button>
           </nav>
-          <Button variant="ghost" size="icon" aria-label="收起侧边栏" title="收起侧边栏" @click="closePanel"><PanelRightClose /></Button>
+          <Button variant="ghost" size="icon" class="shrink-0" aria-label="收起侧边栏" title="收起侧边栏" @click="closePanel"><PanelRightClose /></Button>
         </div>
 
         <ScrollArea ref="scrollArea" class="min-h-0 flex-1" viewport-class="p-4">
@@ -251,9 +294,9 @@ onBeforeUnmount(() => {
       </div>
     </Transition>
 
-    <!-- 收起后的窄轨：铺在面板右侧，展开时淡出并让出点击 -->
+    <!-- 收起后的窄轨（仅宽屏分屏用）：铺在面板右侧，展开时淡出并让出点击 -->
     <div
-      class="sp-rail absolute inset-y-0 right-0 flex w-11 flex-col items-center overflow-hidden bg-[#fafafa] pt-1 pb-2"
+      class="sp-rail absolute inset-y-0 right-0 hidden w-11 flex-col items-center overflow-hidden bg-[#fafafa] pt-1 pb-2 md:flex"
       :class="panelOpen ? 'pointer-events-none opacity-0' : 'opacity-100'"
     >
       <Button variant="ghost" size="icon" aria-label="展开侧边栏" title="展开侧边栏" @click="openPanel"><PanelRightOpen /></Button>
@@ -262,14 +305,34 @@ onBeforeUnmount(() => {
 </template>
 
 <style scoped>
-/* 与左侧导航同一条缓动曲线：宽度真正在动，而不是换一块 DOM */
+/* 与左侧导航同一条缓动曲线：宽度真正在动，而不是换一块 DOM；小屏抽屉走 translate
+   （Tailwind v4 的 translate-x-* 用的是独立的 translate 属性，过渡 transform 无效） */
 .sp-aside {
-  transition: width 320ms cubic-bezier(0.32, 0.72, 0, 1);
+  transition:
+    width 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    translate 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 240ms ease;
 }
 
 /* 拖拽跟手，不能有 320ms 的延迟 */
 .sp-aside[data-dragging='true'] {
   transition: none;
+}
+
+/* 小屏抽屉滑出时的阴影 */
+.sp-aside[data-mobile='true'][data-open='true'] {
+  box-shadow: -12px 0 32px rgb(0 0 0 / 0.14);
+}
+
+/* 小屏遮罩 */
+.sp-fade-enter-active,
+.sp-fade-leave-active {
+  transition: opacity 220ms ease;
+}
+
+.sp-fade-enter-from,
+.sp-fade-leave-to {
+  opacity: 0;
 }
 
 .sp-handle {
@@ -310,7 +373,9 @@ onBeforeUnmount(() => {
   .sp-handle,
   .sp-rail,
   .sp-body,
-  .sp-body-enter-active {
+  .sp-body-enter-active,
+  .sp-fade-enter-active,
+  .sp-fade-leave-active {
     transition-duration: 1ms !important;
     transition-delay: 0ms !important;
   }

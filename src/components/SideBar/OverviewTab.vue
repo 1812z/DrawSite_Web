@@ -141,11 +141,11 @@ async function confirmDelete() {
       :model-id="modelId"
       :memory-enabled="memoryEnabled"
       :running="running"
-      :revision="revision"
       @progress="(text, busy) => emit('context-progress', text, busy)"
       @completed="emit('context-completed')"
     />
-    <ProjectProgress class="mt-6" :application-id="applicationId" :key="revision" />
+    <!-- 不要按 revision 重建：进度是应用级数据，切会话时重建会先清空再重拉，视觉上就是闪一下 -->
+    <ProjectProgress class="mt-6" :application-id="applicationId" :running="running" />
 
     <ConfirmDialog
       :open="deleteOpen"

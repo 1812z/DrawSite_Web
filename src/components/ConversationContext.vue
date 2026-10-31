@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { request } from '@/lib/http'
 import { compressContext, type ContextView } from '@/api/context'
 
-const props = defineProps<{ applicationId: string; conversationId: string; modelId: string; memoryEnabled: boolean; running: boolean; revision: number }>()
+const props = defineProps<{ applicationId: string; conversationId: string; modelId: string; memoryEnabled: boolean; running: boolean }>()
 const emit = defineEmits<{ progress: [text: string, busy: boolean]; completed: [] }>()
 const value = ref<ContextView | null>(null)
 const busy = ref(false)
@@ -12,11 +12,22 @@ const error = ref('')
 const notice = ref('')
 let generation = 0
 let loadSequence = 0
+let lastKey = ''
+let lastRequestAt = 0
 const percent = computed(() => value.value ? Math.min(100, Math.round(value.value.usedTokens / value.value.budgetTokens * 100)) : 0)
 const base = () => `/applications/${props.applicationId}/conversations/${props.conversationId}/context`
 function tokens(count: number) { return count >= 1000 ? `${(count / 1000).toFixed(1)}K` : String(count) }
 async function load() {
   if (!props.conversationId) { value.value = null; return }
+  /**
+   * 400ms 内的同参数请求直接合并。
+   * 切会话时 conversationId 与 running（后者被 resetRunState 清成 false）会先后变化，
+   * 两个触发点会各发一次请求；这里保证同参数的第二次不再发。
+   */
+  const key = `${props.conversationId}:${props.memoryEnabled}`
+  if (key === lastKey && Date.now() - lastRequestAt < 400) return
+  lastKey = key
+  lastRequestAt = Date.now()
   const current = generation
   const sequence = ++loadSequence
   try {
@@ -38,8 +49,15 @@ async function compress() {
   } catch (cause) { if (current === generation) error.value = cause instanceof Error ? cause.message : '压缩失败' }
   finally { ++loadSequence; busy.value = false; if (current === generation) emit('progress', '', false) }
 }
+/**
+ * 只在「会话变了」和「一轮任务结束」时各拉一次。
+ *
+ * 以前还监听 revision（= 消息条数）：切换会话时它是 旧条数 → 0 → 新条数，会变两次，
+ * 叠加会话本身的变更，每次切换都会发两次 /context 请求，右侧数据也跟着闪两次。
+ * 上下文占用只随消息增减变化，而消息增减必然对应一轮任务结束，所以改用 running 的下降沿。
+ */
 watch(() => [props.conversationId, props.memoryEnabled], () => { generation++; value.value = null; notice.value = ''; emit('progress', '', false); void load() }, { immediate: true })
-watch(() => [props.revision, props.running], () => { void load() })
+watch(() => props.running, (next, previous) => { if (previous && !next) void load() })
 const timer = setInterval(() => { if (props.running || busy.value) void load() }, 5000)
 onUnmounted(() => { generation++; clearInterval(timer) })
 </script>
