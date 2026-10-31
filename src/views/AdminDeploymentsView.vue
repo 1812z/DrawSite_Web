@@ -6,12 +6,16 @@ import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog } from '@/components/ui/dialog'
 import { useAuthStore } from '@/stores/auth'
-import * as api from '@/api/docker'
+import type { Container, Deployment } from '@/api/docker'
+import {
+  action as containerAction, containers, deployments as fetchDeployments,
+  logs as fetchLogs, offline, remove as deleteContainer,
+} from '@/api/docker'
 
 const auth = useAuthStore()
 
-const items = ref<api.Container[]>([])
-const deployments = ref<api.Deployment[]>([])
+const items = ref<Container[]>([])
+const deployments = ref<Deployment[]>([])
 const loading = ref(false)
 const busy = ref(false)
 const error = ref('')
@@ -28,7 +32,7 @@ const logsText = ref('')
 const logsLoading = ref(false)
 const logsError = ref('')
 
-async function openLogs(item: api.Container) {
+async function openLogs(item: Container) {
   logsContainerId.value = item.id
   logsTitle.value = item.name
   logsText.value = ''
@@ -42,7 +46,7 @@ async function refreshLogs() {
   logsLoading.value = true
   logsError.value = ''
   try {
-    logsText.value = await api.logs(logsContainerId.value, true)
+    logsText.value = await fetchLogs(logsContainerId.value, true)
   } catch (cause) {
     logsError.value = cause instanceof Error ? cause.message : '读取日志失败'
   } finally {
@@ -62,7 +66,7 @@ function containerStatus(value: string) {
 async function load() {
   loading.value = true
   try {
-    const [list, published] = await Promise.all([api.containers(true), api.deployments(true)])
+    const [list, published] = await Promise.all([containers(true), fetchDeployments(true)])
     items.value = list
     deployments.value = published
     error.value = ''
@@ -91,7 +95,7 @@ async function run(action: () => Promise<unknown>, notice = ''): Promise<boolean
 }
 
 async function removeContainer(id: string) {
-  if (await run(() => api.remove(id, true), '容器已删除')) deletingContainerId.value = ''
+  if (await run(() => deleteContainer(id, true), '容器已删除')) deletingContainerId.value = ''
 }
 
 onMounted(() => { if (auth.isAdmin) void load() })
@@ -137,7 +141,7 @@ onMounted(() => { if (auth.isAdmin) void load() })
               <p v-if="item.error" class="mt-1.5 break-all text-xs text-red-600">{{ item.error }}</p>
             </div>
             <div class="flex shrink-0 flex-wrap items-center justify-end gap-1">
-              <Button variant="outline" size="sm" :disabled="busy" @click="run(() => api.action(item.id, item.status === 'RUNNING' ? 'stop' : 'start', true))">{{ item.status === 'RUNNING' ? '停止' : '启动' }}</Button>
+              <Button variant="outline" size="sm" :disabled="busy" @click="run(() => containerAction(item.id, item.status === 'RUNNING' ? 'stop' : 'start', true))">{{ item.status === 'RUNNING' ? '停止' : '启动' }}</Button>
               <Button variant="outline" size="sm" :disabled="busy" @click="openLogs(item)"><ScrollText />日志</Button>
               <template v-if="deletingContainerId === item.id">
                 <span class="text-[11px] text-neutral-400">确认删除？</span>
@@ -170,7 +174,7 @@ onMounted(() => { if (auth.isAdmin) void load() })
               <p v-if="item.type === 'SERVICE'" class="mt-1.5 break-all text-xs text-neutral-400">项目 {{ item.applicationId }}</p>
               <p v-if="item.error" class="mt-1.5 break-all text-xs text-red-600">{{ item.error }}</p>
             </div>
-            <Button class="shrink-0" variant="outline" size="sm" :disabled="busy" @click="run(() => api.offline(item.id, true), '已下线')">下线</Button>
+            <Button class="shrink-0" variant="outline" size="sm" :disabled="busy" @click="run(() => offline(item.id, true), '已下线')">下线</Button>
           </div>
         </div>
       </section>

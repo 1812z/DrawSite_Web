@@ -1,7 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
+import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronLeft, ChevronRight, FolderOpen, LoaderCircle, Pencil, Plus, RotateCw, Trash2 } from '@lucide/vue'
+import { FolderOpen, LoaderCircle, Pencil, Plus, RotateCw, Trash2 } from '@lucide/vue'
+import InfiniteLoader from '@/components/InfiniteLoader.vue'
 import { Button } from '@/components/ui/button'
 import { Badge } from '@/components/ui/badge'
 import { Dialog } from '@/components/ui/dialog'
@@ -22,7 +23,9 @@ const pageSize = 20
 const loading = ref(false)
 const error = ref('')
 
-const totalPages = computed(() => Math.max(1, Math.ceil(total.value / pageSize)))
+const hasMore = computed(() => applications.value.length < total.value)
+let requestId = 0
+onUnmounted(() => { requestId++ })
 
 const dialogOpen = ref(false)
 const editing = ref<Application | null>(null)
@@ -41,18 +44,29 @@ const STATUS_META: Record<string, { label: string; class: string }> = {
   FAILED: { label: '失败', class: 'border-red-300 text-red-600' },
 }
 
-async function load() {
+async function load(append = false) {
+  if (append && (loading.value || !hasMore.value)) return
+  const id = ++requestId
+  const lastPage = append ? page.value + 1 : page.value
   loading.value = true
   error.value = ''
   try {
-    const result = await api.listApplications(page.value, pageSize)
-    applications.value = result.records
-    total.value = result.total
+    const records: Application[] = []
+    let actualPage = append ? lastPage : 1
+    for (let p = actualPage; p <= lastPage; p++) {
+      const result = await api.listApplications(p, pageSize)
+      if (id !== requestId) return
+      records.push(...result.records)
+      total.value = result.total
+      actualPage = p
+      if (p * pageSize >= result.total) break
+    }
+    applications.value = [...new Map([...(append ? applications.value : []), ...records].map(item => [item.id, item])).values()]
+    page.value = actualPage
   } catch (cause) {
-    applications.value = []
-    error.value = describeError(cause, '加载应用失败')
+    if (id === requestId) error.value = describeError(cause, '加载应用失败')
   } finally {
-    loading.value = false
+    if (id === requestId) loading.value = false
   }
 }
 
@@ -138,7 +152,7 @@ function shortCommit(hash: string): string {
   return hash.length > 8 ? `${hash.slice(0, 8)}…` : hash
 }
 
-onMounted(load)
+onMounted(() => { void load() })
 </script>
 
 <template>
@@ -152,10 +166,10 @@ onMounted(load)
       <Button @click="openCreate"><Plus />新建应用</Button>
     </div>
 
-    <div v-if="loading" class="mt-10 flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground"><LoaderCircle class="animate-spin" />正在加载应用…</div>
-    <div v-else-if="error" class="mt-10 rounded-xl border p-8 text-center">
+    <div v-if="loading && !applications.length" class="mt-10"><InfiniteLoader :has-more="true" :loading="true" /></div>
+    <div v-else-if="error && !applications.length" class="mt-10 rounded-xl border p-8 text-center">
       <p class="text-sm text-red-600">{{ error }}</p>
-      <Button variant="outline" size="sm" class="mt-4" @click="load"><RotateCw />重新加载</Button>
+      <Button variant="outline" size="sm" class="mt-4" @click="load()"><RotateCw />重新加载</Button>
     </div>
     <div v-else-if="applications.length === 0" class="mt-10 flex flex-col items-center rounded-2xl border border-dashed px-6 py-20 text-center">
       <FolderOpen class="mb-5 size-8 text-neutral-400" />
@@ -183,13 +197,8 @@ onMounted(load)
           <Button variant="ghost" size="icon" class="text-neutral-400 hover:text-red-600" aria-label="删除应用" title="删除" @click="openDelete(application)"><Trash2 /></Button>
         </div>
       </div>
-      <div v-if="totalPages > 1" class="flex items-center justify-between pt-2 text-xs text-muted-foreground">
-        <span>共 {{ total }} 个应用 · 第 {{ page }} / {{ totalPages }} 页</span>
-        <div class="flex items-center gap-1">
-          <Button variant="outline" size="sm" :disabled="page <= 1" @click="page -= 1; load()"><ChevronLeft />上一页</Button>
-          <Button variant="outline" size="sm" :disabled="page >= totalPages" @click="page += 1; load()">下一页<ChevronRight /></Button>
-        </div>
-      </div>
+      <InfiniteLoader :has-more="hasMore" :loading="loading" :count="applications.length" :error="error" @load="load(true)" />
+      <p v-if="!hasMore && !loading" class="py-3 text-center text-xs text-neutral-400">已加载全部 {{ total }} 个应用</p>
     </div>
 
     <Dialog :open="dialogOpen" :title="editing ? '编辑应用' : '新建应用'" @update:open="dialogOpen = $event">

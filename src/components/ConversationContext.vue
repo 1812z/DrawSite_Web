@@ -11,20 +11,23 @@ const busy = ref(false)
 const error = ref('')
 const notice = ref('')
 let generation = 0
+let loadSequence = 0
 const percent = computed(() => value.value ? Math.min(100, Math.round(value.value.usedTokens / value.value.budgetTokens * 100)) : 0)
 const base = () => `/applications/${props.applicationId}/conversations/${props.conversationId}/context`
 function tokens(count: number) { return count >= 1000 ? `${(count / 1000).toFixed(1)}K` : String(count) }
 async function load() {
   if (!props.conversationId) { value.value = null; return }
   const current = generation
+  const sequence = ++loadSequence
   try {
     const result = await request<ContextView>(`${base()}?memoryEnabled=${props.memoryEnabled}`)
-    if (current === generation) { value.value = result; error.value = ''; if (!busy.value) emit('progress', result.compressionText, result.compressing) }
-  } catch (cause) { if (current === generation) error.value = cause instanceof Error ? cause.message : '加载失败' }
+    if (current === generation && sequence === loadSequence) { value.value = result; error.value = ''; if (!busy.value) emit('progress', result.compressionText, result.compressing) }
+  } catch (cause) { if (current === generation && sequence === loadSequence) error.value = cause instanceof Error ? cause.message : '加载失败' }
 }
 async function compress() {
   if (busy.value || props.running || !props.modelId) return
   busy.value = true; error.value = ''; notice.value = ''
+  ++loadSequence
   const current = generation
   emit('progress', '', true)
   try {
@@ -33,7 +36,7 @@ async function compress() {
     })
     if (current === generation) { value.value = result; notice.value = '已压缩，原始消息仍保留'; emit('completed') }
   } catch (cause) { if (current === generation) error.value = cause instanceof Error ? cause.message : '压缩失败' }
-  finally { busy.value = false; if (current === generation) emit('progress', '', false) }
+  finally { ++loadSequence; busy.value = false; if (current === generation) emit('progress', '', false) }
 }
 watch(() => [props.conversationId, props.memoryEnabled], () => { generation++; value.value = null; notice.value = ''; emit('progress', '', false); void load() }, { immediate: true })
 watch(() => [props.revision, props.running], () => { void load() })

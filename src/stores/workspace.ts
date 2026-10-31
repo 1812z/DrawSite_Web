@@ -1,4 +1,4 @@
-import { reactive, ref } from 'vue'
+import { computed, reactive, ref } from 'vue'
 import { defineStore } from 'pinia'
 import * as applicationsApi from '@/api/applications'
 import * as conversationsApi from '@/api/conversations'
@@ -14,21 +14,45 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   const expandedIds = reactive(new Set<string>())
   const conversationsByApplication = reactive<Record<string, Conversation[]>>({})
   const conversationsLoading = reactive<Record<string, boolean>>({})
+  const applicationsTotal = ref(0)
+  const applicationsPage = ref(0)
+  const hasMoreApplications = computed(() => applications.value.length < applicationsTotal.value)
+  const conversationsTotal = reactive<Record<string, number>>({})
+  const conversationsPage = reactive<Record<string, number>>({})
+  const conversationsError = reactive<Record<string, string>>({})
+  let generation = 0
+  let appRequest = 0
+  const conversationRequests: Record<string, number> = {}
+  function merge<T extends { id: string }>(items: T[]): T[] { return [...new Map(items.map(item => [item.id, item])).values()] }
+  function hasMoreConversations(id: string) { return (conversationsByApplication[id]?.length ?? 0) < (conversationsTotal[id] ?? 0) }
 
-  async function refreshApplications(): Promise<void> {
+  async function refreshApplications(append = false): Promise<void> {
+    if (append && (loading.value || !hasMoreApplications.value)) return
+    const request = ++appRequest
+    const epoch = generation
+    const pages = append ? applicationsPage.value + 1 : Math.max(1, applicationsPage.value)
     loading.value = true
     error.value = ''
     try {
-      const result = await applicationsApi.listApplications(1, 20)
-      applications.value = result.records
+      const results = []
+      for (let p = append ? pages : 1; p <= pages; p++) {
+        const result = await applicationsApi.listApplications(p, 20)
+        if (epoch !== generation || request !== appRequest) return
+        results.push(result)
+        if (p * 20 >= result.total) break
+      }
+      const result = results[results.length - 1]!
+      applications.value = merge([...(append ? applications.value : []), ...results.flatMap(item => item.records)])
+      applicationsTotal.value = result.total
+      applicationsPage.value = append ? pages : results.length
       if (expandedIds.size === 0 && result.records.length > 0) {
         expandedIds.add(result.records[0].id)
         void loadConversations(result.records[0].id)
       }
     } catch (cause) {
-      error.value = cause instanceof Error ? cause.message : '加载最近应用失败'
+      if (epoch === generation && request === appRequest) error.value = cause instanceof Error ? cause.message : '加载最近应用失败'
     } finally {
-      loading.value = false
+      if (epoch === generation && request === appRequest) loading.value = false
     }
   }
 
@@ -46,36 +70,52 @@ export const useWorkspaceStore = defineStore('workspace', () => {
   }
 
   async function loadConversations(applicationId: string): Promise<void> {
-    if (conversationsByApplication[applicationId]) return
-    conversationsLoading[applicationId] = true
-    try {
-      const result = await conversationsApi.listConversations(applicationId, 1, 50)
-      conversationsByApplication[applicationId] = result.records
-    } catch {
-      conversationsByApplication[applicationId] = []
-    } finally {
-      conversationsLoading[applicationId] = false
-    }
+    if (conversationsPage[applicationId] || conversationsLoading[applicationId]) return
+    await fetchConversations(applicationId, false)
   }
 
   /** 强制重新拉取会话列表：首轮回复后服务端会生成会话标题，需要刷新侧栏。 */
   async function refreshConversations(applicationId: string): Promise<void> {
+    await fetchConversations(applicationId, false)
+  }
+  async function loadMoreConversations(applicationId: string): Promise<void> {
+    if (conversationsLoading[applicationId] || !hasMoreConversations(applicationId)) return
+    await fetchConversations(applicationId, true)
+  }
+  async function fetchConversations(applicationId: string, append: boolean): Promise<void> {
+    const epoch = generation
+    const request = (conversationRequests[applicationId] ?? 0) + 1
+    conversationRequests[applicationId] = request
+    const valid = () => epoch === generation && conversationRequests[applicationId] === request
+    const pages = append ? (conversationsPage[applicationId] ?? 0) + 1 : Math.max(1, conversationsPage[applicationId] ?? 0)
     conversationsLoading[applicationId] = true
+    conversationsError[applicationId] = ''
     try {
-      const result = await conversationsApi.listConversations(applicationId, 1, 50)
-      conversationsByApplication[applicationId] = result.records
-    } catch {
-      // 刷新失败保留原列表，不打断当前会话
+      const results = []
+      for (let p = append ? pages : 1; p <= pages; p++) {
+        const result = await conversationsApi.listConversations(applicationId, p, 20)
+        if (!valid()) return
+        results.push(result)
+        if (p * 20 >= result.total) break
+      }
+      const result = results[results.length - 1]!
+      conversationsByApplication[applicationId] = merge([...(append ? conversationsByApplication[applicationId] ?? [] : []), ...results.flatMap(item => item.records)])
+      conversationsTotal[applicationId] = result.total
+      conversationsPage[applicationId] = append ? pages : results.length
+    } catch (cause) {
+      if (valid()) conversationsError[applicationId] = cause instanceof Error ? cause.message : '加载会话失败'
     } finally {
-      conversationsLoading[applicationId] = false
+      if (valid()) conversationsLoading[applicationId] = false
     }
   }
 
   /** 新建会话固定使用“新建会话”标题，不需要用户输入。 */
   async function createConversation(applicationId: string): Promise<Conversation> {
     const created = await conversationsApi.createConversation(applicationId, NEW_CONVERSATION_TITLE)
-    if (!conversationsByApplication[applicationId]) conversationsByApplication[applicationId] = []
-    conversationsByApplication[applicationId].unshift(created)
+    await refreshConversations(applicationId)
+    if (!conversationsByApplication[applicationId]?.some(item => item.id === created.id)) {
+      conversationsByApplication[applicationId] = [created, ...(conversationsByApplication[applicationId] ?? [])]
+    }
     expandedIds.add(applicationId)
     return created
   }
@@ -98,6 +138,7 @@ export const useWorkspaceStore = defineStore('workspace', () => {
       const index = list.findIndex((item) => item.id === id)
       if (index >= 0) list.splice(index, 1)
     }
+    await refreshConversations(applicationId)
   }
 
   /** 删除应用。后端会连带清理工作区目录、会话消息、对话任务与版本记录。 */
@@ -108,14 +149,24 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     delete conversationsByApplication[id]
     delete conversationsLoading[id]
     expandedIds.delete(id)
+    conversationRequests[id] = (conversationRequests[id] ?? 0) + 1
+    delete conversationsTotal[id]
+    delete conversationsPage[id]
+    delete conversationsError[id]
+    await refreshApplications()
   }
 
   function reset(): void {
+    generation++
+    loading.value = false
+    applicationsTotal.value = 0
+    applicationsPage.value = 0
     applications.value = []
     error.value = ''
     expandedIds.clear()
     for (const key of Object.keys(conversationsByApplication)) delete conversationsByApplication[key]
     for (const key of Object.keys(conversationsLoading)) delete conversationsLoading[key]
+    for (const map of [conversationsTotal, conversationsPage, conversationsError, conversationRequests]) for (const key of Object.keys(map)) delete map[key]
   }
 
   return {
@@ -125,6 +176,8 @@ export const useWorkspaceStore = defineStore('workspace', () => {
     expandedIds,
     conversationsByApplication,
     conversationsLoading,
+    applicationsTotal, hasMoreApplications, hasMoreConversations, conversationsError,
+    loadMoreApplications: () => refreshApplications(true), loadMoreConversations,
     refreshApplications,
     isExpanded,
     toggle,

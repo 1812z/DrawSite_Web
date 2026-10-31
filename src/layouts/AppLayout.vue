@@ -7,6 +7,7 @@ import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import ConfirmDialog from '@/components/ConfirmDialog.vue'
+import InfiniteLoader from '@/components/InfiniteLoader.vue'
 import { describeError } from '@/lib/errors'
 import { useSystemStore } from '@/stores/system'
 import { useAuthStore } from '@/stores/auth'
@@ -50,7 +51,7 @@ function isActiveConversation(applicationId: string, conversationId: string): bo
 
 function openConversation(applicationId: string, conversationId: string) {
   if (route.path === `/applications/${applicationId}`) {
-    void router.replace({ query: { conversation: conversationId } })
+    void router.replace({ query: { ...route.query, conversation: conversationId } })
   } else {
     void router.push({ path: `/applications/${applicationId}`, query: { conversation: conversationId } })
   }
@@ -201,9 +202,11 @@ async function confirmDeleteConversation() {
                   <button class="shrink-0 rounded p-1 text-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/10" aria-label="重命名会话" title="重命名" @click="openRenameConversation(application.id, conversation)"><Pencil class="size-3" /></button>
                   <button class="shrink-0 rounded p-1 text-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/10 hover:text-red-600" aria-label="删除会话" title="删除" @click="openDeleteConversation(application.id, conversation)"><Trash2 class="size-3" /></button>
                 </div>
+                <InfiniteLoader compact :has-more="workspace.hasMoreConversations(application.id)" :loading="!!workspace.conversationsLoading[application.id]" :count="workspace.conversationsByApplication[application.id]?.length ?? 0" :error="workspace.conversationsError[application.id]" @load="workspace.conversationsByApplication[application.id] ? workspace.loadMoreConversations(application.id) : workspace.loadConversations(application.id)" />
               </div>
             </div>
           </div>
+          <InfiniteLoader compact :has-more="workspace.hasMoreApplications" :loading="workspace.loading" :count="workspace.applications.length" :error="workspace.error" @load="workspace.hasMoreApplications ? workspace.loadMoreApplications() : workspace.refreshApplications()" />
         </div>
       </div>
       <div class="mt-auto space-y-3 pt-4">

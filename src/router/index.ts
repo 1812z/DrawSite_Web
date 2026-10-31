@@ -30,4 +30,4 @@ router.beforeEach(async (to) => {
   return true
 })
 
-router.afterEach((to) => { document.title = `${String(to.meta.title ?? '工作台')} · 绘站` })
+// 标题不在这里设置：App.vue 里按「是否打开会话」统一处理（会话标题 / 绘站）

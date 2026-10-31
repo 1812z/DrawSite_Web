@@ -8,12 +8,16 @@ import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
 import { Switch } from '@/components/ui/switch'
 import { useAuthStore } from '@/stores/auth'
-import * as api from '@/api/docker'
+import type { DockerTemplate } from '@/api/docker'
+import {
+  config as fetchConfig, engineStatus, pull, removeTemplate as deleteTemplate,
+  saveConfig, saveTemplate as updateTemplate, templates as fetchTemplates,
+} from '@/api/docker'
 
 const auth = useAuthStore()
 defineProps<{ embedded?: boolean }>()
 
-const templates = ref<api.DockerTemplate[]>([])
+const templates = ref<DockerTemplate[]>([])
 const configLoaded = ref(false)
 const quotaSaving = ref(false)
 const loading = ref(false)
@@ -53,7 +57,7 @@ function commandText(command: string[]): string {
 async function load() {
   loading.value = true
   try {
-    const [config, defs] = await Promise.all([api.config(), api.templates(true)])
+    const [config, defs] = await Promise.all([fetchConfig(), fetchTemplates(true)])
     Object.assign(quota, {
       maxRunning: String(config.config.maxRunning), maxContainers: String(config.config.maxContainers),
       maxPlatformRunning: String(config.config.maxPlatformRunning), diskMiB: String(config.config.diskMiB),
@@ -99,7 +103,7 @@ function numberOf(value: string, label: string): number {
 function saveQuota() {
   quotaSaving.value = true
   return run(async () => {
-    await api.saveConfig({
+    await saveConfig({
       maxRunning: numberOf(quota.maxRunning, '每用户运行数'),
       maxContainers: numberOf(quota.maxContainers, '每用户容器数'),
       maxPlatformRunning: numberOf(quota.maxPlatformRunning, '平台运行上限'),
@@ -122,7 +126,7 @@ function openCreateTemplate() {
   templateDialogOpen.value = true
 }
 
-function openEditTemplate(item: api.DockerTemplate) {
+function openEditTemplate(item: DockerTemplate) {
   editingTemplateId.value = item.id
   Object.assign(templateForm, {
     id: item.id, name: item.name, image: item.image,
@@ -157,7 +161,7 @@ async function saveTemplate() {
   templateFormError.value = ''
   const isEditing = editingTemplateId.value !== null
   try {
-    await api.saveTemplate({
+    await updateTemplate({
       id: templateForm.id.trim(),
       name: templateForm.name.trim(),
       image: templateForm.image.trim(),
@@ -178,7 +182,7 @@ async function saveTemplate() {
 }
 
 async function removeTemplate(id: string) {
-  if (await run(() => api.removeTemplate(id), '模板已删除')) deletingTemplateId.value = ''
+  if (await run(() => deleteTemplate(id), '模板已删除')) deletingTemplateId.value = ''
 }
 
 onMounted(() => { if (auth.isAdmin) void load() })
@@ -224,7 +228,7 @@ onMounted(() => { if (auth.isAdmin) void load() })
         </div>
         <div class="mt-5 flex flex-wrap gap-2">
           <Button :disabled="busy" @click="saveQuota"><LoaderCircle v-if="quotaSaving" class="animate-spin" />保存配额</Button>
-          <Button variant="outline" :disabled="busy" @click="run(async () => { output = await api.engineStatus() }, '已获取引擎状态')">检查 Docker</Button>
+          <Button variant="outline" :disabled="busy" @click="run(async () => { output = await engineStatus() }, '已获取引擎状态')">检查 Docker</Button>
         </div>
       </section>
 
@@ -261,7 +265,7 @@ onMounted(() => { if (auth.isAdmin) void load() })
             </div>
             <div class="flex shrink-0 flex-wrap items-center justify-end gap-1">
               <Button variant="ghost" size="icon" aria-label="编辑模板" title="编辑" :disabled="busy" @click="openEditTemplate(item)"><Pencil /></Button>
-              <Button variant="outline" size="sm" :disabled="busy" @click="run(async () => { output = await api.pull(item.id) }, '镜像已拉取')"><Download />拉取镜像</Button>
+              <Button variant="outline" size="sm" :disabled="busy" @click="run(async () => { output = await pull(item.id) }, '镜像已拉取')"><Download />拉取镜像</Button>
               <template v-if="deletingTemplateId === item.id">
                 <span class="text-[11px] text-neutral-400">确认删除？</span>
                 <Button variant="outline" size="sm" :disabled="busy" @click="deletingTemplateId = ''">取消</Button>
