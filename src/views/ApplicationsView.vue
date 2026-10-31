@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { FolderOpen, LoaderCircle, Pencil, Plus, RotateCw, Trash2 } from '@lucide/vue'
+import { FolderOpen, LoaderCircle, Pencil, Plus, Trash2 } from '@lucide/vue'
 import InfiniteLoader from '@/components/InfiniteLoader.vue'
 import { Button } from '@/components/ui/button'
+import RefreshButton from '@/components/RefreshButton.vue'
 import { Badge } from '@/components/ui/badge'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -169,7 +170,7 @@ onMounted(() => { void load() })
     <div v-if="loading && !applications.length" class="mt-10"><InfiniteLoader :has-more="true" :loading="true" /></div>
     <div v-else-if="error && !applications.length" class="mt-10 rounded-xl border p-8 text-center">
       <p class="text-sm text-red-600">{{ error }}</p>
-      <Button variant="outline" size="sm" class="mt-4" @click="load()"><RotateCw />重新加载</Button>
+      <RefreshButton variant="outline" class="mt-4 size-8" label="重新加载应用列表" @click="load()" />
     </div>
     <div v-else-if="applications.length === 0" class="mt-10 flex flex-col items-center rounded-2xl border border-dashed px-6 py-20 text-center">
       <FolderOpen class="mb-5 size-8 text-neutral-400" />

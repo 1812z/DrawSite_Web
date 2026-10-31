@@ -1,6 +1,8 @@
 <script setup lang="ts">
-import { computed, onMounted, ref } from 'vue'
+import { computed, ref } from 'vue'
 import { Button } from '@/components/ui/button'
+import RefreshButton from '@/components/RefreshButton.vue'
+import { useTabRefresh } from '@/lib/tab-refresh'
 import type { Container, Deployment, DockerTemplate } from '@/api/docker'
 import {
   action as containerAction, containers, create as createContainer, deployments as fetchDeployments,
@@ -50,13 +52,16 @@ function toggleService(item: Container) {
   const published = deployment(item.id)
   return run(() => published ? offline(published.id) : publish(props.projectId, 'SERVICE', item.id))
 }
-onMounted(() => { void run(load) })
+/** 标签被缓存后重新进入时，超过 60s 静默拉一次；失败保留上一次的列表，不打断阅读 */
+useTabRefresh(async () => {
+  try { await load() } catch { /* 保留旧数据 */ }
+}, { ttl: 60_000 })
 </script>
 
 <template>
   <div>
     <div class="mx-auto max-w-5xl space-y-5">
-      <header class="flex items-center justify-between"><div><h1 class="text-xl font-semibold">部署</h1><p class="mt-1 text-xs text-neutral-500">管理临时运行环境和常驻应用服务</p></div><Button variant="outline" :disabled="busy" @click="run(load)">刷新</Button></header>
+      <header class="flex items-center justify-between"><div><h1 class="text-xl font-semibold">部署</h1><p class="mt-1 text-xs text-neutral-500">管理临时运行环境和常驻应用服务</p></div><RefreshButton variant="outline" class="size-8" :loading="busy" label="刷新部署" @click="run(load)" /></header>
       <p v-if="error" role="alert" class="rounded-lg border border-red-200 p-3 text-sm text-red-600">{{ error }}</p>
       <section class="space-y-3 rounded-xl border p-4">
         <div class="flex items-center justify-between gap-3"><h2 class="text-sm font-medium">静态网站</h2><div class="flex items-center gap-2"><span class="text-xs text-neutral-500">{{ staticSite ? '已上线' : '未上线' }}</span><button type="button" role="switch" aria-label="静态网站上线" :aria-checked="!!staticSite" :disabled="busy" :class="['relative h-5 w-9 shrink-0 rounded-full transition-colors disabled:opacity-50', staticSite ? 'bg-neutral-900' : 'bg-neutral-300']" @click="toggleStatic"><span :class="['absolute top-0.5 size-4 rounded-full bg-white transition-transform', staticSite ? 'left-0.5 translate-x-4' : 'left-0.5']" /></button></div></div>
@@ -87,7 +92,7 @@ onMounted(() => { void run(load) })
           <Button size="sm" variant="outline" :disabled="busy" :aria-expanded="!!logsOpen[item.id]" @click="toggleLogs(item.id)">{{ logsOpen[item.id] ? '收起日志' : '查看日志' }}</Button>
           <Button size="sm" variant="outline" :disabled="busy || !!deployment(item.id)" @click="run(() => removeContainer(item.id))">删除</Button>
         </div>
-        <div v-if="logsOpen[item.id]" class="space-y-2 rounded-lg bg-neutral-100 p-3"><div class="flex items-center justify-between"><span class="text-xs font-medium">容器日志</span><Button size="sm" variant="ghost" :disabled="busy" @click="run(async () => { logs[item.id] = await fetchLogs(item.id) })">刷新日志</Button></div><pre class="max-h-72 overflow-auto whitespace-pre-wrap break-all text-xs">{{ logs[item.id] || '暂无日志' }}</pre></div>
+        <div v-if="logsOpen[item.id]" class="space-y-2 rounded-lg bg-neutral-100 p-3"><div class="flex items-center justify-between"><span class="text-xs font-medium">容器日志</span><RefreshButton variant="ghost" class="size-7" :disabled="busy" label="刷新日志" @click="run(async () => { logs[item.id] = await fetchLogs(item.id) })" /></div><pre class="max-h-72 overflow-auto whitespace-pre-wrap break-all text-xs">{{ logs[item.id] || '暂无日志' }}</pre></div>
         <div class="flex gap-2"><input v-model="commands[item.id]" placeholder="容器内命令，例如 npm run build" class="min-w-0 flex-1 rounded border px-3 py-2 text-xs" /><Button size="sm" variant="outline" :disabled="busy || item.status !== 'RUNNING' || !commands[item.id]?.trim()" @click="run(async () => { const result = await execute(item.id, commands[item.id]!); outputs[item.id] = `退出码 ${result.exitCode}\n${result.output}` })">执行</Button></div>
         <details v-if="outputs[item.id]" open class="rounded-lg bg-neutral-100 p-3"><summary class="cursor-pointer text-xs">命令输出</summary><pre class="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-all text-xs">{{ outputs[item.id] }}</pre></details>
         <div v-if="item.purpose === 'PUBLISH'" class="space-y-2 border-t pt-3">

@@ -1,9 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
 import { useRouter } from 'vue-router'
-import { ChevronLeft, ChevronRight, KeyRound, LoaderCircle, Pencil, RotateCw, UserRound } from '@lucide/vue'
+import { ChevronLeft, ChevronRight, KeyRound, LoaderCircle, Pencil, UserRound } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { Button } from '@/components/ui/button'
+import RefreshButton from '@/components/RefreshButton.vue'
 import { Badge } from '@/components/ui/badge'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -144,13 +145,13 @@ onMounted(load)
         <h1 class="text-2xl font-medium tracking-tight">用户管理</h1>
         <p class="mt-3 text-sm text-muted-foreground">查看与编辑平台用户，调整角色、启用状态或重置密码。</p>
       </div>
-      <Button variant="outline" size="sm" :disabled="loading" @click="load"><RotateCw :class="{ 'animate-spin': loading }" />刷新</Button>
+      <RefreshButton variant="outline" class="size-8" :loading="loading" label="刷新用户" @click="load" />
     </div>
 
     <div v-if="loading && users.length === 0" class="mt-10 flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground"><LoaderCircle class="animate-spin" />正在加载用户…</div>
     <div v-else-if="error && users.length === 0" class="mt-10 rounded-xl border p-8 text-center">
       <p class="text-sm text-red-600">{{ error }}</p>
-      <Button variant="outline" size="sm" class="mt-4" @click="load"><RotateCw />重新加载</Button>
+      <RefreshButton variant="outline" class="mt-4 size-8" label="重新加载用户" @click="load" />
     </div>
     <template v-else>
       <div class="mt-8 overflow-x-auto rounded-xl border">

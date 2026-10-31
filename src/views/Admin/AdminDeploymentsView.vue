@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { onMounted, ref } from 'vue'
-import { LoaderCircle, RotateCw, ScrollText, Trash2 } from '@lucide/vue'
+import { LoaderCircle, ScrollText, Trash2 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { Button } from '@/components/ui/button'
+import RefreshButton from '@/components/RefreshButton.vue'
 import { Badge } from '@/components/ui/badge'
 import { Dialog } from '@/components/ui/dialog'
 import { useAuthStore } from '@/stores/auth'
@@ -110,7 +111,7 @@ onMounted(() => { if (auth.isAdmin) void load() })
           <h1 class="text-xl font-medium tracking-tight">部署管理</h1>
           <p class="mt-2 text-sm text-muted-foreground">平台上所有用户的容器与已上线站点。</p>
         </div>
-        <Button variant="outline" size="sm" :disabled="loading || busy" @click="load"><RotateCw :class="{ 'animate-spin': loading }" />刷新</Button>
+        <RefreshButton variant="outline" class="size-8" :loading="loading" :disabled="busy" label="刷新部署" @click="load" />
       </header>
 
       <p v-if="error" role="alert" class="rounded-lg border border-red-200 p-3 text-sm leading-6 text-red-600">{{ error }}</p>
@@ -190,7 +191,7 @@ onMounted(() => { if (auth.isAdmin) void load() })
             <p v-else class="py-8 text-center text-xs text-neutral-400">这个容器还没有输出</p>
           </div>
           <div class="flex justify-end gap-2">
-            <Button variant="outline" size="sm" :disabled="logsLoading" @click="refreshLogs"><RotateCw :class="{ 'animate-spin': logsLoading }" />刷新</Button>
+            <RefreshButton variant="outline" class="size-7" :loading="logsLoading" label="刷新日志" @click="refreshLogs" />
             <Button size="sm" @click="logsOpen = false">关闭</Button>
           </div>
         </div>

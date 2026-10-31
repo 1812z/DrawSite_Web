@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { onMounted, reactive, ref } from 'vue'
-import { Download, LoaderCircle, Pencil, Plus, RotateCw, Trash2 } from '@lucide/vue'
+import { Download, LoaderCircle, Pencil, Plus, Trash2 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { Button } from '@/components/ui/button'
+import RefreshButton from '@/components/RefreshButton.vue'
 import { Badge } from '@/components/ui/badge'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -197,7 +198,7 @@ onMounted(() => { if (auth.isAdmin) void load() })
           <h1 class="text-xl font-medium tracking-tight">Docker 管理</h1>
           <p class="mt-2 text-sm text-muted-foreground">维护环境模板与资源配额。容器与已上线站点在「部署管理」查看。</p>
         </div>
-        <Button variant="outline" size="sm" :disabled="loading || busy" @click="load"><RotateCw :class="{ 'animate-spin': loading }" />刷新</Button>
+        <RefreshButton variant="outline" class="size-8" :loading="loading" :disabled="busy" label="刷新容器" @click="load" />
       </header>
 
       <p v-if="error" role="alert" class="rounded-lg border border-red-200 p-3 text-sm leading-6 text-red-600">{{ error }}</p>

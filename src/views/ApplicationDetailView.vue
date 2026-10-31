@@ -1,50 +1,29 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import {
-  FileJson,
-  FileText,
-  LoaderCircle,
-  MessageSquare,
-  NotebookText,
-  PanelRightClose,
-  PanelRightOpen,
-  RotateCw,
-  Download,
-  Trash2,
-} from '@lucide/vue'
+import { LoaderCircle, MessageSquare } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
-import { Badge } from '@/components/ui/badge'
 import { Select } from '@/components/ui/select'
 import { Switch } from '@/components/ui/switch'
-import { ScrollArea } from '@/components/ui/scroll-area'
-import ConfirmDialog from '@/components/ConfirmDialog.vue'
 import MarkdownView from '@/components/MarkdownView.vue'
 import RequirementComposer from '@/components/RequirementComposer.vue'
 import ToolPicker from '@/components/ToolPicker.vue'
 import RunProcess from '@/components/RunProcess.vue'
-import ProjectProgress from '@/components/ProjectProgress.vue'
-import ProjectGit from '@/components/ProjectGit.vue'
-import ProjectTests from '@/components/ProjectTests.vue'
-import ProjectPreview from '@/components/ProjectPreview.vue'
+import SidePanel from '@/components/SideBar/SidePanel.vue'
 import type { SelectedElement } from '@/lib/preview-selector'
 import { elementMessage } from '@/lib/preview-selector'
 import SelectedElementCard from '@/components/SelectedElementCard.vue'
 import InfiniteLoader from '@/components/InfiniteLoader.vue'
-import ConversationContext from '@/components/ConversationContext.vue'
-import DeploymentsView from '@/views/DeploymentsView.vue'
 import MessageQuestions from '@/components/MessageQuestions.vue'
 import * as applicationsApi from '@/api/applications'
 import * as conversationsApi from '@/api/conversations'
 import * as agentApi from '@/api/agent'
 import { describeError } from '@/lib/errors'
 import { takePendingPrompt } from '@/lib/pendingPrompt'
-import { ApiError } from '@/lib/http'
-import { getToken } from '@/lib/session'
 import { getPublicSettings } from '@/api/settings'
 import { useWorkspaceStore } from '@/stores/workspace'
 import { useAuthStore } from '@/stores/auth'
-import type { Application, DocumentView } from '@/api/applications'
+import type { Application } from '@/api/applications'
 import type { Message } from '@/api/conversations'
 import type { PublicSettings } from '@/api/settings'
 import type { ProjectTool, ReasoningEffort, RunView } from '@/api/agent'
@@ -56,20 +35,6 @@ const auth = useAuthStore()
 const applicationId = String(route.params.id)
 
 const MESSAGE_SIZE = 50
-
-const STATUS_META: Record<string, { label: string; class: string }> = {
-  INITIALIZING: { label: '初始化中', class: 'border-neutral-300 text-neutral-500' },
-  READY: { label: '就绪', class: 'border-neutral-800 text-neutral-800' },
-  FAILED: { label: '初始化失败', class: 'border-red-300 text-red-600' },
-}
-
-// AGENTS.md 不在这里：它是项目记忆，归右半的「记忆」标签，避免两个标签重复列同一个文件
-const DOCUMENTS: { path: string; label: string; kind: 'markdown' | 'json' }[] = [
-  { path: 'docs/requirements.md', label: '需求说明', kind: 'markdown' },
-  { path: 'docs/design/overview.md', label: '概要设计', kind: 'markdown' },
-  { path: 'docs/design/detail.md', label: '详细设计', kind: 'markdown' },
-  { path: 'progress.json', label: '开发进度', kind: 'json' },
-]
 
 // 应用
 const application = ref<Application | null>(null)
@@ -178,78 +143,15 @@ const cancelling = ref(false)
 let streamController: AbortController | null = null
 let titleRefreshTimer: number | null = null
 
-// 右侧多标签面板
-const PANEL_WIDTH_KEY = 'drawsite:side-panel-width'
-const MIN_PANEL_PCT = 20
-const MAX_PANEL_PCT = 70
-const DEFAULT_PANEL_PCT = 40
+// 右侧多标签面板：容器宽度由概览里的拖拽换算，面板本身在 SidePanel 里
 const containerRef = ref<HTMLElement | null>(null)
-const panelOpen = ref(true)
-const panelWidth = ref(readStoredPanelWidth())
-const dragging = ref(false)
-type SideTab = 'overview' | 'documents' | 'revisions' | 'memories' | 'deployments' | 'tests' | 'preview'
-const sideTab = ref<SideTab>('overview')
-const sideTabs: { key: SideTab; label: string }[] = [
-  { key: 'overview', label: '概览' },
-  { key: 'documents', label: '文档' },
-  { key: 'revisions', label: '版本' },
-  { key: 'memories', label: '记忆' },
-  { key: 'deployments', label: '部署' },
-  { key: 'tests', label: '测试' },
-  { key: 'preview', label: '预览' },
-]
-
-function readStoredPanelWidth(): number {
-  const raw = localStorage.getItem(PANEL_WIDTH_KEY)
-  if (!raw) return DEFAULT_PANEL_PCT
-  const value = Number(raw)
-  if (!Number.isFinite(value)) return DEFAULT_PANEL_PCT
-  return Math.min(MAX_PANEL_PCT, Math.max(MIN_PANEL_PCT, value))
-}
-
-function startResize() {
-  dragging.value = true
-  document.body.style.cursor = 'col-resize'
-  window.addEventListener('mousemove', onResize)
-  window.addEventListener('mouseup', stopResize)
-}
-
-function onResize(event: MouseEvent) {
-  const el = containerRef.value
-  if (!el) return
-  const rect = el.getBoundingClientRect()
-  const pct = ((rect.right - event.clientX) / rect.width) * 100
-  panelWidth.value = Math.min(MAX_PANEL_PCT, Math.max(MIN_PANEL_PCT, Math.round(pct)))
-  localStorage.setItem(PANEL_WIDTH_KEY, String(panelWidth.value))
-}
-
-function stopResize() {
-  dragging.value = false
-  document.body.style.cursor = ''
-  window.removeEventListener('mousemove', onResize)
-  window.removeEventListener('mouseup', stopResize)
-}
 
 onBeforeUnmount(() => {
-  stopResize()
   streamController?.abort()
   streamController = null
   if (titleRefreshTimer !== null) window.clearTimeout(titleRefreshTimer)
   titleRefreshTimer = null
 })
-
-// 文档
-const activeDocument = ref<DocumentView | null>(null)
-const documentLoading = ref(false)
-const documentError = ref('')
-
-// 记忆：项目记忆就是工作区里的 AGENTS.md，不是数据库记录（见 docs/memory.md）
-const memoryDocument = ref<DocumentView | null>(null)
-const memoryLoading = ref(false)
-const memoryError = ref('')
-const memoryMissing = ref(false)
-
-// 版本
 
 const canLoadMoreMessages = computed(() => messages.value.length < messagesTotal.value)
 
@@ -354,63 +256,9 @@ function formatTime(value: string): string {
   return new Date(value).toLocaleString('zh-CN', { hour12: false })
 }
 
-function shortCommit(hash: string): string {
-  if (!hash) return '—'
-  return hash.length > 8 ? `${hash.slice(0, 8)}…` : hash
-}
-
+// 概览里的刷新与提示：刷新要连带重取消息，所以留在详情页，再下发给侧边栏展示
 const overviewRefreshing = ref(false)
 const overviewNotice = ref('')
-const downloading = ref(false)
-let downloadController: AbortController | null = null
-let downloadUrl = ''
-onBeforeUnmount(() => { downloadController?.abort(); if (downloadUrl) URL.revokeObjectURL(downloadUrl) })
-async function downloadProject() {
-  downloadController?.abort()
-  if (downloadUrl) { URL.revokeObjectURL(downloadUrl); downloadUrl = '' }
-  const controller = new AbortController()
-  downloadController = controller
-  downloading.value = true
-  overviewNotice.value = ''
-  try {
-    const response = await fetch(`/api/applications/${applicationId}/download`, {
-      headers: { Authorization: `Bearer ${getToken()}` }, signal: controller.signal,
-    })
-    if (!response.ok) throw new Error('项目下载失败，请重试')
-    const blob = await response.blob()
-    if (controller.signal.aborted || downloadController !== controller) return
-    downloadUrl = URL.createObjectURL(blob)
-    const link = document.createElement('a')
-    link.href = downloadUrl
-    link.download = `${application.value?.name || 'project'}.zip`.replace(/[\\/:*?"<>|]/g, '_')
-    document.body.appendChild(link); link.click(); link.remove()
-    overviewNotice.value = '下载已开始'
-  } catch (cause) {
-    if (!controller.signal.aborted) overviewNotice.value = describeError(cause, '下载失败')
-  } finally {
-    if (downloadController === controller) downloading.value = false
-  }
-}
-
-/** 删除应用：后端会连带清理工作区目录、会话消息、对话任务与版本记录，并自动停止该应用全部回复。 */
-const deleteAppOpen = ref(false)
-const deletingApp = ref(false)
-const deleteAppError = ref('')
-
-async function confirmDeleteApplication() {
-  if (deletingApp.value) return
-  deletingApp.value = true
-  deleteAppError.value = ''
-  try {
-    await workspace.deleteApplication(applicationId)
-    deleteAppOpen.value = false
-    void router.replace('/applications')
-  } catch (cause) {
-    deleteAppError.value = describeError(cause, '删除应用失败')
-  } finally {
-    deletingApp.value = false
-  }
-}
 
 /** 概览里的刷新：静默重取应用信息与已保存的消息，不切到整页加载态。 */
 async function refreshOverview() {
@@ -887,61 +735,6 @@ async function submitAnswers(item: agentApi.Clarification, answers: agentApi.Det
   finally { answeringQuestions.value = false }
 }
 
-async function loadDocument(documentPath: string) {
-  activeDocument.value = null
-  documentLoading.value = true
-  documentError.value = ''
-  try {
-    activeDocument.value = await applicationsApi.getDocument(applicationId, documentPath)
-  } catch (cause) {
-    documentError.value = cause instanceof Error ? cause.message : '加载文档失败'
-  } finally {
-    documentLoading.value = false
-  }
-}
-
-/**
- * 项目记忆 = 工作区里的 AGENTS.md，不是数据库记录（见 docs/memory.md）。
- * 后端把 AGENTS.md 放在允许读取的文档路径里，所以直接复用文档接口；文件不存在时返回
- * 404 DOCUMENT_NOT_FOUND，这是正常状态（项目还没记过东西），当成空态而不是错误。
- * 用户级跨项目偏好不在这里，走设置页的「记忆管理」。
- */
-async function loadMemory() {
-  memoryLoading.value = true
-  memoryError.value = ''
-  memoryMissing.value = false
-  try {
-    memoryDocument.value = await applicationsApi.getDocument(applicationId, 'AGENTS.md')
-  } catch (cause) {
-    memoryDocument.value = null
-    if (cause instanceof ApiError && cause.code === 'DOCUMENT_NOT_FOUND') memoryMissing.value = true
-    else memoryError.value = describeError(cause, '加载项目记忆失败')
-  } finally {
-    memoryLoading.value = false
-  }
-}
-
-function prettyJson(content: string): string {
-  if (!content.trim()) return ''
-  try {
-    return JSON.stringify(JSON.parse(content), null, 2)
-  } catch {
-    return content
-  }
-}
-
-
-function openSideTab(tab: SideTab) {
-  panelOpen.value = true
-  sideTab.value = tab
-  if (tab === 'documents' && !activeDocument.value && !documentLoading.value) {
-    void loadDocument(DOCUMENTS[0].path)
-  }
-  if (tab === 'memories' && !memoryDocument.value && !memoryLoading.value) {
-    void loadMemory()
-  }
-}
-
 /**
  * 切换应用（比如从侧栏点另一个应用的会话）由 App.vue 给 RouterView 加 key 强制重建本组件，
  * `applicationId` 只在 setup 时取一次，不需要watch 参数变化，更不能往「我的应用」跳。
@@ -1157,147 +950,21 @@ onMounted(() => {
       </template>
     </div>
 
-      <!-- 拖拽分隔条（仅展开时显示） -->
-      <div
-        v-if="panelOpen"
-        class="w-1 shrink-0 cursor-col-resize bg-neutral-200 transition-colors hover:bg-neutral-400"
-        :class="{ 'bg-neutral-400': dragging }"
-        role="separator"
-        aria-orientation="vertical"
-        title="拖拽调整侧边栏宽度"
-        @mousedown.prevent="startResize"
-      />
-
-      <!-- 右半：顶栏（概览 / 文档 / 版本 / 记忆 + 收起）与内容区 -->
-      <aside v-if="panelOpen" :style="{ width: `${panelWidth}%` }" class="flex min-w-[20%] max-w-[70%] shrink-0 flex-col border-l bg-[#fafafa]">
-        <div class="flex h-11 shrink-0 items-center justify-between border-b px-3">
-          <nav class="flex items-center gap-1 text-sm" aria-label="侧边栏标签">
-            <button
-              v-for="tab in sideTabs"
-              :key="tab.key"
-              :aria-current="sideTab === tab.key ? 'page' : undefined"
-              :class="['rounded-md px-2.5 py-1 transition-colors', sideTab === tab.key ? 'bg-[#eaeaea] font-medium' : 'text-neutral-500 hover:bg-black/5']"
-              @click="openSideTab(tab.key)"
-            >{{ tab.label }}</button>
-          </nav>
-          <Button variant="ghost" size="icon" aria-label="收起侧边栏" title="收起侧边栏" @click="panelOpen = false"><PanelRightClose /></Button>
-        </div>
-        <ScrollArea class="min-h-0 flex-1" viewport-class="p-4">
-          <!-- 概览 -->
-          <div v-if="sideTab === 'overview'">
-            <div class="rounded-xl border bg-white p-4">
-              <div class="flex items-start justify-between gap-3">
-                <div class="min-w-0">
-                  <h2 class="truncate text-sm font-medium">{{ application.name }}</h2>
-                  <p v-if="application.description" class="mt-1.5 line-clamp-3 text-xs leading-5 text-muted-foreground">{{ application.description }}</p>
-                </div>
-                <Badge :class="STATUS_META[application.status]?.class ?? 'border-neutral-300 text-neutral-500'">{{ STATUS_META[application.status]?.label ?? application.status }}</Badge>
-              </div>
-              <div class="mt-3 flex items-center gap-2 border-t pt-3">
-                <Button variant="outline" size="sm" :disabled="overviewRefreshing" title="重新读取应用信息与已保存的消息" @click="refreshOverview">
-                  <RotateCw :class="{ 'animate-spin': overviewRefreshing }" />刷新
-                </Button>
-                <Button variant="outline" size="sm" title="打包下载整个项目，再次点击取消上次请求并重新下载" @click="downloadProject"><LoaderCircle v-if="downloading" class="animate-spin" /><Download v-else />{{ downloading ? '重新下载' : '下载' }}</Button>
-                <span v-if="overviewNotice" role="status" class="min-w-0 truncate text-xs text-muted-foreground">{{ overviewNotice }}</span>
-                <Button variant="ghost" size="sm" class="ml-auto text-neutral-400 hover:text-red-600" title="删除应用" @click="deleteAppOpen = true"><Trash2 />删除</Button>
-              </div>
-            </div>
-
-            <div class="mt-3 space-y-3 rounded-xl border bg-white p-4 text-sm">
-              <div class="flex items-center justify-between"><span class="text-xs text-muted-foreground">当前提交</span><span class="font-mono text-xs">{{ shortCommit(application.currentCommit) }}</span></div>
-              <div class="flex items-center justify-between"><span class="text-xs text-muted-foreground">创建时间</span><span class="text-xs">{{ formatTime(application.createdAt) }}</span></div>
-              <div class="flex items-center justify-between"><span class="text-xs text-muted-foreground">更新时间</span><span class="text-xs">{{ formatTime(application.updatedAt) }}</span></div>
-            </div>
-
-            <ConversationContext :application-id="applicationId" :conversation-id="selectedConversationId || ''" :model-id="selectedModelId" :memory-enabled="memoryEnabled" :running="runRunning" :revision="messages.length" @progress="contextProgress" @completed="refreshMessages" />
-            <ProjectProgress class="mt-6" :application-id="applicationId" :key="messages.length" />
-          </div>
-          <!-- 文档 -->
-          <div v-else-if="sideTab === 'documents'">
-            <div class="space-y-0.5">
-              <button
-                v-for="document in DOCUMENTS"
-                :key="document.path"
-                :aria-current="activeDocument?.path === document.path ? 'page' : undefined"
-                :class="['flex w-full items-center gap-2 rounded-lg px-2.5 py-2 text-left text-sm transition-colors', activeDocument?.path === document.path ? 'bg-[#eaeaea] font-medium' : 'text-neutral-600 hover:bg-black/5']"
-                @click="loadDocument(document.path)"
-              >
-                <component :is="document.kind === 'json' ? FileJson : FileText" class="size-3.5 shrink-0 text-neutral-400" />
-                <span class="min-w-0 truncate">{{ document.label }}</span>
-              </button>
-            </div>
-            <div class="mt-4">
-              <p v-if="documentLoading" class="flex items-center gap-2 py-6 text-xs text-muted-foreground"><LoaderCircle class="animate-spin" />加载文档…</p>
-              <p v-else-if="documentError" class="py-6 text-xs leading-6 text-red-600">{{ documentError }}</p>
-              <template v-else-if="activeDocument">
-                <p v-if="!activeDocument.content" class="py-6 text-center text-xs text-muted-foreground">文档内容为空</p>
-                <template v-else>
-                  <p class="mb-3 font-mono text-[11px] text-neutral-400">{{ activeDocument.path }}</p>
-                  <ProjectProgress v-if="activeDocument.path === 'progress.json'" :application-id="applicationId" :key="messages.length" />
-                  <MarkdownView v-else-if="DOCUMENTS.find((item) => item.path === activeDocument?.path)?.kind === 'markdown'" :content="activeDocument.content" />
-                  <pre v-else class="overflow-x-auto rounded-lg bg-[#f8f8f8] p-3 font-mono text-[11px] leading-5">{{ prettyJson(activeDocument.content) }}</pre>
-                </template>
-              </template>
-            </div>
-          </div>
-          <!-- 版本 -->
-          <div v-else-if="sideTab === 'deployments'">
-            <DeploymentsView :project-id="applicationId" :key="applicationId" />
-          </div>
-          <div v-else-if="sideTab === 'tests'">
-            <ProjectTests :application-id="applicationId" />
-          </div>
-          <div v-else-if="sideTab === 'preview'">
-            <ProjectPreview :application-id="applicationId" :running="runRunning" :revision="messages.length" @selected="selectedElement = $event" />
-          </div>
-          <div v-else-if="sideTab === 'revisions'">
-            <ProjectGit :application-id="applicationId" :running="runRunning" :key="messages.length" @restored="refreshOverview" />
-          </div>
-          <!--
-            记忆：项目记忆就是工作区里的 AGENTS.md，不是数据库记录（见 docs/memory.md）。
-            AGENTS.md 已从「文档」标签的列表里移除，只在这里展示，两个标签不重复列同一个文件。
-          -->
-          <div v-else>
-            <div class="flex items-center gap-2.5">
-              <NotebookText class="size-4 shrink-0 text-neutral-500" />
-              <h2 class="text-sm font-medium">项目记忆</h2>
-              <span class="ml-auto font-mono text-[11px] text-neutral-400">AGENTS.md</span>
-              <Button variant="ghost" size="icon" class="size-7" aria-label="刷新项目记忆" title="刷新项目记忆" :disabled="memoryLoading" @click="loadMemory">
-                <LoaderCircle v-if="memoryLoading" class="animate-spin" />
-                <RotateCw v-else />
-              </Button>
-            </div>
-            <div class="mt-4">
-              <p v-if="memoryError" class="py-6 text-xs leading-6 text-red-600">{{ memoryError }}</p>
-              <div v-else-if="memoryMissing" class="rounded-xl border border-dashed px-4 py-8 text-center">
-                <p class="text-xs text-neutral-400">还没有 AGENTS.md</p>
-                <p class="mt-2 text-xs leading-6 text-muted-foreground">在对话里让 AI 把项目偏好和已确认的决策记下来，就会生成这个文件。</p>
-              </div>
-              <template v-else-if="memoryDocument">
-                <p v-if="!memoryDocument.content" class="py-6 text-center text-xs text-muted-foreground">AGENTS.md 内容为空</p>
-                <MarkdownView v-else :content="memoryDocument.content" />
-              </template>
-              <p v-else class="py-6 text-center text-xs text-muted-foreground">尚未加载</p>
-            </div>
-          </div>
-        </ScrollArea>
-      </aside>
-
-      <!-- 收起时：右侧窄轨，仅保留展开入口 -->
-      <div v-else class="flex w-11 shrink-0 flex-col items-center border-l bg-[#fafafa] py-2">
-        <Button variant="ghost" size="icon" aria-label="展开侧边栏" title="展开侧边栏" @click="panelOpen = true"><PanelRightOpen /></Button>
-      </div>
-
-      <ConfirmDialog
-        :open="deleteAppOpen"
-        title="删除应用"
-        :description="`确定删除「${application.name}」？工作区目录、全部会话消息、对话任务与版本记录都会被清理，且无法恢复。`"
-        confirm-text="删除应用"
-        destructive
-        :loading="deletingApp"
-        :error="deleteAppError"
-        @update:open="deleteAppOpen = $event"
-        @confirm="confirmDeleteApplication"
-      />
+    <SidePanel
+      :application="application"
+      :application-id="applicationId"
+      :conversation-id="selectedConversationId"
+      :model-id="selectedModelId"
+      :memory-enabled="memoryEnabled"
+      :running="runRunning"
+      :revision="messages.length"
+      :refreshing="overviewRefreshing"
+      :notice="overviewNotice"
+      :container-el="containerRef"
+      @refresh="refreshOverview"
+      @refresh-messages="refreshMessages"
+      @context-progress="contextProgress"
+      @select-element="selectedElement = $event"
+    />
   </div>
 </template>

@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, onMounted, reactive, ref } from 'vue'
-import { LoaderCircle, Pencil, Plus, RotateCw, Trash2 } from '@lucide/vue'
+import { LoaderCircle, Pencil, Plus, Trash2 } from '@lucide/vue'
 import { toast } from 'vue-sonner'
 import { Button } from '@/components/ui/button'
+import RefreshButton from '@/components/RefreshButton.vue'
 import { Badge } from '@/components/ui/badge'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -272,13 +273,13 @@ onMounted(load)
         <h1 class="text-2xl font-medium tracking-tight">平台设置</h1>
         <p class="mt-3 text-sm text-muted-foreground">维护注册开关与可用模型。每次改动立即保存，密钥只存服务端，页面不展示明文。</p>
       </div>
-      <Button variant="outline" size="sm" :disabled="loading" @click="load"><RotateCw :class="{ 'animate-spin': loading }" />重新加载</Button>
+      <RefreshButton variant="outline" class="size-8" :loading="loading" label="重新加载设置" @click="load" />
     </div>
 
     <div v-if="loading" class="mt-10 flex items-center justify-center gap-2 py-20 text-sm text-muted-foreground"><LoaderCircle class="animate-spin" />正在加载设置…</div>
     <div v-else-if="loadError" class="mt-10 rounded-xl border p-8 text-center">
       <p class="text-sm text-red-600">{{ loadError }}</p>
-      <Button variant="outline" size="sm" class="mt-4" @click="load"><RotateCw />重新加载</Button>
+      <RefreshButton variant="outline" class="mt-4 size-8" label="重新加载设置" @click="load" />
     </div>
     <template v-else-if="settings">
       <!-- 注册开关 -->

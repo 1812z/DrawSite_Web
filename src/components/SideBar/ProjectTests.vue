@@ -1,9 +1,11 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue'
+import { computed, onActivated, onDeactivated, onMounted, onUnmounted, ref } from 'vue'
 import { Button } from '@/components/ui/button'
+import RefreshButton from '@/components/RefreshButton.vue'
+import { useTabRefresh } from '@/lib/tab-refresh'
 import { request } from '@/lib/http'
 
-const props = defineProps<{ applicationId: string }>()
+const props = defineProps<{ applicationId: string; revision: number; running: boolean }>()
 type Tab = 'contract' | 'cases' | 'runs'
 interface Document { path: string; content: string; sha256: string }
 interface Result { id: string; title: string; operationId: string; method: string; path: string; status: string; expectedStatus: number; actualStatus?: number; durationMs: number; error?: string; responseBody?: string }
@@ -38,14 +40,33 @@ async function start() {
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '发起测试失败' }
   finally { busy.value = false }
 }
-onMounted(load)
-const timer = setInterval(() => { if (state.value?.runs.some(run => run.status === 'RUNNING')) void load() }, 2000)
-onUnmounted(() => clearInterval(timer))
+useTabRefresh(load, { revision: () => props.revision, running: () => props.running })
+
+/**
+ * 执行中的测试每 2s 轮询一次；标签被缓存后组件不会卸载，
+ * 所以显式在失活时停表、回来自动续上，别在后台空转。
+ */
+let pollTimer: number | null = null
+function startPolling() {
+  if (pollTimer !== null) return
+  pollTimer = window.setInterval(() => {
+    if (state.value?.runs.some(run => run.status === 'RUNNING')) void load()
+  }, 2000)
+}
+function stopPolling() {
+  if (pollTimer === null) return
+  window.clearInterval(pollTimer)
+  pollTimer = null
+}
+onMounted(startPolling)
+onActivated(startPolling)
+onDeactivated(stopPolling)
+onUnmounted(stopPolling)
 </script>
 
 <template>
   <section class="space-y-4">
-    <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="text-sm font-semibold">API 测试</h2><div class="flex gap-2"><Button size="sm" variant="outline" @click="load">刷新</Button><Button size="sm" :disabled="busy || !contractReady || !state?.suite || state.runs.some(run => run.status === 'RUNNING')" @click="start">{{ busy ? '提交中…' : '发起测试' }}</Button></div></div>
+    <div class="flex flex-wrap items-center justify-between gap-2"><h2 class="text-sm font-semibold">API 测试</h2><div class="flex gap-2"><RefreshButton variant="outline" class="size-8" :disabled="busy" label="刷新 API 测试" @click="load" /><Button size="sm" :disabled="busy || !contractReady || !state?.suite || state.runs.some(run => run.status === 'RUNNING')" @click="start">{{ busy ? '提交中…' : '发起测试' }}</Button></div></div>
     <nav class="flex gap-1 rounded-lg bg-neutral-100 p-1"><button v-for="item in ([{ key: 'contract', label: '契约规范' }, { key: 'cases', label: '测试用例' }, { key: 'runs', label: '测试执行' }] as const)" :key="item.key" type="button" :class="['flex-1 rounded-md px-2 py-2 text-xs', tab === item.key ? 'bg-white font-medium shadow-sm' : 'text-neutral-500']" @click="tab = item.key">{{ item.label }}</button></nav>
     <p v-if="error" role="alert" class="text-xs text-red-600">{{ error }}</p>
     <template v-if="tab === 'contract'"><pre v-if="state?.contract" class="overflow-auto whitespace-pre-wrap break-all rounded-lg border p-3 text-xs">{{ pretty(state.contract.content) }}</pre><p v-else class="py-8 text-center text-xs text-neutral-400">尚未编写契约</p></template>

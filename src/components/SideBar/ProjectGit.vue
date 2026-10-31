@@ -1,11 +1,12 @@
 <script setup lang="ts">
-import { onMounted, ref } from 'vue'
+import { ref } from 'vue'
 import { RotateCw, Undo2 } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { getGitTree, getGitStatus, rollbackGit, commitGit } from '@/api/applications'
+import { useTabRefresh } from '@/lib/tab-refresh'
 import type { GitHistory, GitState } from '@/api/applications'
 
-const props = defineProps<{ applicationId: string; running: boolean }>()
+const props = defineProps<{ applicationId: string; running: boolean; revision: number }>()
 const emit = defineEmits<{ restored: [] }>()
 const history = ref<GitHistory | null>(null)
 const state = ref<GitState | null>(null)
@@ -42,7 +43,7 @@ async function restore(hash: string) {
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '回滚失败' }
   finally { restoring.value = '' }
 }
-onMounted(load)
+useTabRefresh(load, { revision: () => props.revision, running: () => props.running })
 async function commit() {
   if (!state.value || !selected.value.length || committing.value || props.running) return
   committing.value = true

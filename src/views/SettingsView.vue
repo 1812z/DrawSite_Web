@@ -7,10 +7,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { useAuthStore } from '@/stores/auth'
 import * as usersApi from '@/api/users'
-import AdminUsersView from '@/views/AdminUsersView.vue'
-import AdminSettingsView from '@/views/AdminSettingsView.vue'
+import AdminUsersView from '@/views/Admin/AdminUsersView.vue'
+import AdminSettingsView from '@/views/Admin/AdminSettingsView.vue'
 import MemorySettingsView from '@/views/MemorySettingsView.vue'
-import AdminDockerView from '@/views/AdminDockerView.vue'
+import AdminDockerView from '@/views/Admin/AdminDockerView.vue'
 
 const auth = useAuthStore()
 const router = useRouter()

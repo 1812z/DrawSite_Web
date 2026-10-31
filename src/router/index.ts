@@ -10,7 +10,7 @@ export const router = createRouter({
     { path: '/applications/:id', name: 'application-detail', component: () => import('@/views/ApplicationDetailView.vue'), meta: { title: '应用工作区' } },
     { path: '/settings', name: 'settings', component: () => import('@/views/SettingsView.vue'), meta: { title: '设置' } },
     { path: '/deployments', redirect: '/applications' },
-    { path: '/admin/deployments', name: 'admin-deployments', component: () => import('@/views/AdminDeploymentsView.vue'), meta: { title: '部署管理', admin: true } },
+    { path: '/admin/deployments', name: 'admin-deployments', component: () => import('@/views/Admin/AdminDeploymentsView.vue'), meta: { title: '部署管理', admin: true } },
     { path: '/admin/docker', redirect: '/settings?tab=docker' },
     { path: '/:pathMatch(.*)*', name: 'not-found', component: () => import('@/views/NotFoundView.vue'), meta: { title: '页面不存在', public: true } },
   ],

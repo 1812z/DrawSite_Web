@@ -2,7 +2,7 @@
 import { computed, onMounted, ref, watch } from 'vue'
 import type { Component } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
-import { Blocks, ChevronRight, FolderOpen, House, LoaderCircle, LogOut, MessageSquare, PanelLeft, Pencil, Plus, Server, Settings, Trash2, X } from '@lucide/vue'
+import { Blocks, ChevronRight, FolderOpen, House, LoaderCircle, LogIn, LogOut, MessageSquare, PanelLeft, PanelLeftClose, PanelLeftOpen, Pencil, Plus, Server, Settings, Trash2, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import { Dialog } from '@/components/ui/dialog'
 import { Input } from '@/components/ui/input'
@@ -20,6 +20,13 @@ const system = useSystemStore()
 const auth = useAuthStore()
 const workspace = useWorkspaceStore()
 const sidebarOpen = ref(false)
+/**
+ * 桌面端的收起态：留一条图标轨（导航 / 设置 / 退出都还能点）。
+ * 移动端不用这个状态——抽屉本来就是覆盖式展开，收起即隐藏。
+ */
+const SIDEBAR_COLLAPSE_KEY = 'drawsite:sidebar-collapsed'
+const sidebarCollapsed = ref(localStorage.getItem(SIDEBAR_COLLAPSE_KEY) === '1')
+watch(sidebarCollapsed, (value) => { localStorage.setItem(SIDEBAR_COLLAPSE_KEY, value ? '1' : '0') })
 /** 管理员多一个「部署管理」入口：平台容器与已上线站点都在里面 */
 const navigation = computed(() => {
   const items: { to: string; label: string; icon: Component }[] = [
@@ -137,32 +144,61 @@ async function confirmDeleteConversation() {
 
 <template>
   <div class="flex h-dvh overflow-hidden">
-    <button v-if="sidebarOpen" class="fixed inset-0 z-30 bg-black/20 md:hidden" aria-label="关闭导航" @click="sidebarOpen = false" />
-    <aside :class="['fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r bg-[#f8f8f8] p-3 transition-transform md:static md:translate-x-0', sidebarOpen ? 'translate-x-0' : '-translate-x-full']">
-      <div class="mb-3 flex h-12 items-center justify-between px-3">
-        <RouterLink to="/" class="flex items-center gap-2.5 font-semibold tracking-tight"><Blocks class="size-5" /> 绘站 <span class="text-xs font-normal text-muted-foreground">DrawSite</span></RouterLink>
+    <Transition name="sb-fade">
+      <button v-if="sidebarOpen" class="fixed inset-0 z-30 bg-black/25 md:hidden" aria-label="关闭导航" @click="sidebarOpen = false" />
+    </Transition>
+    <aside
+      class="sb-aside fixed inset-y-0 left-0 z-40 flex w-60 flex-col border-r bg-[#f8f8f8] p-3 md:static md:translate-x-0"
+      :data-collapsed="sidebarCollapsed ? 'true' : 'false'"
+      :class="[
+        sidebarOpen ? 'translate-x-0 shadow-2xl md:shadow-none' : 'md:shadow-none -translate-x-full',
+        sidebarCollapsed ? 'md:w-[68px] md:px-1.5' : 'md:w-60',
+      ]"
+    >
+      <div class="mb-3 flex h-12 shrink-0 items-center justify-between gap-1 px-2 transition-[padding] duration-300 ease-out" :class="sidebarCollapsed ? 'md:justify-center md:px-0' : ''">
+        <RouterLink to="/" class="sb-brand flex min-w-0 items-center gap-2.5 font-semibold tracking-tight"><Blocks class="size-5 shrink-0" /> 绘站 <span class="sb-label text-xs font-normal text-muted-foreground">DrawSite</span></RouterLink>
+        <Button
+          variant="ghost"
+          size="icon"
+          class="hidden shrink-0 md:inline-flex"
+          :aria-label="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          :title="sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'"
+          :aria-expanded="!sidebarCollapsed"
+          @click="sidebarCollapsed = !sidebarCollapsed"
+        >
+          <PanelLeftOpen v-if="sidebarCollapsed" /><PanelLeftClose v-else />
+        </Button>
         <Button variant="ghost" size="icon" class="md:hidden" aria-label="关闭导航" @click="sidebarOpen = false"><X /></Button>
       </div>
       <!-- 服务状态：点击重新检查 -->
-      <div class="mb-5 px-3">
+      <div class="sb-row mb-5 px-3" :class="sidebarCollapsed ? 'md:flex md:flex-col md:items-center md:px-0' : ''">
         <button
           type="button"
           :disabled="system.loading"
-          class="flex items-center gap-1.5 text-xs text-muted-foreground transition-colors hover:text-neutral-700 disabled:opacity-60"
-          title="点击重新检查后端连接"
+          class="sb-row flex items-center gap-1.5 text-xs text-muted-foreground hover:text-neutral-700 disabled:opacity-60"
+          :class="sidebarCollapsed ? 'md:gap-0' : ''"
+          :title="`${system.label} · 点击重新检查后端连接`"
           @click="recheck"
         >
-          <span :class="['size-1.5 rounded-full', system.health ? 'bg-neutral-800' : 'bg-neutral-300']" />
-          {{ system.label }}
+          <span :class="['size-1.5 shrink-0 rounded-full', system.health ? 'bg-neutral-800' : 'bg-neutral-300']" />
+          <span class="sb-label">{{ system.label }}</span>
         </button>
-        <p v-if="system.error" class="mt-1 text-[11px] leading-4 text-neutral-400">{{ system.error }}</p>
+        <p v-if="system.error" class="sb-extra mt-1 text-[11px] leading-4 text-neutral-400">{{ system.error }}</p>
       </div>
       <nav aria-label="主导航" class="space-y-1">
-        <RouterLink v-for="item in navigation" :key="item.to" :to="item.to" :aria-current="route.path === item.to ? 'page' : undefined" :class="['flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm transition-colors', route.path === item.to ? 'bg-[#eaeaea] font-medium' : 'text-neutral-600 hover:bg-black/5']">
-          <component :is="item.icon" class="size-4" />{{ item.label }}
+        <RouterLink
+          v-for="item in navigation"
+          :key="item.to"
+          :to="item.to"
+          :title="item.label"
+          :aria-current="route.path === item.to ? 'page' : undefined"
+          :class="['sb-row flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm', route.path === item.to ? 'bg-[#eaeaea] font-medium' : 'text-neutral-600 hover:bg-black/5', sidebarCollapsed ? 'md:justify-center md:gap-0 md:px-0' : '']"
+        >
+          <component :is="item.icon" class="size-4 shrink-0" />
+          <span class="sb-label">{{ item.label }}</span>
         </RouterLink>
       </nav>
-      <div class="mt-6 flex min-h-0 flex-1 flex-col px-3">
+      <div class="sb-recent mt-6 flex min-h-0 flex-1 flex-col px-3">
         <div class="flex items-center justify-between">
           <p class="text-xs text-muted-foreground">最近的应用</p>
           <RouterLink to="/applications" class="text-xs text-neutral-400 transition-colors hover:text-neutral-600">全部 →</RouterLink>
@@ -209,20 +245,28 @@ async function confirmDeleteConversation() {
           <InfiniteLoader compact :has-more="workspace.hasMoreApplications" :loading="workspace.loading" :count="workspace.applications.length" :error="workspace.error" @load="workspace.hasMoreApplications ? workspace.loadMoreApplications() : workspace.refreshApplications()" />
         </div>
       </div>
-      <div class="mt-auto space-y-3 pt-4">
-        <RouterLink to="/settings" class="flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm text-neutral-600 hover:bg-black/5"><Settings class="size-4" />设置</RouterLink>
-        <div v-if="auth.user" class="border-t px-3 pt-4 pb-2">
-          <div class="flex items-center justify-between gap-2">
-            <div class="min-w-0">
+      <div class="mt-auto shrink-0 space-y-2 pt-4">
+        <RouterLink
+          to="/settings"
+          title="设置"
+          :aria-current="route.path === '/settings' ? 'page' : undefined"
+          :class="['sb-row flex items-center gap-3 rounded-lg px-3 py-2.5 text-sm', route.path === '/settings' ? 'bg-[#eaeaea] font-medium' : 'text-neutral-600 hover:bg-black/5', sidebarCollapsed ? 'md:justify-center md:gap-0 md:px-0' : '']"
+        >
+          <Settings class="size-4 shrink-0" />
+          <span class="sb-label">设置</span>
+        </RouterLink>
+        <div v-if="auth.user" class="border-t px-3 pt-4 pb-2 transition-[padding] duration-300 ease-out" :class="sidebarCollapsed ? 'md:border-0 md:px-0 md:pt-3' : ''">
+          <div class="flex items-center justify-between gap-2 transition-[gap] duration-300 ease-out" :class="sidebarCollapsed ? 'md:flex-col md:gap-1' : ''">
+            <div class="sb-user-text min-w-0">
               <p class="truncate text-sm font-medium">{{ auth.user.displayName }}</p>
               <p class="mt-0.5 truncate text-xs text-muted-foreground">@{{ auth.user.username }} · {{ auth.user.role === 'ADMIN' ? '管理员' : '用户' }}</p>
             </div>
-            <Button variant="ghost" size="icon" aria-label="退出登录" title="退出登录" @click="handleLogout()"><LogOut /></Button>
+            <Button variant="ghost" size="icon" aria-label="退出登录" :title="`退出登录 · ${auth.user.displayName}`" @click="handleLogout()"><LogOut /></Button>
           </div>
         </div>
-        <div v-else class="border-t px-3 pt-4 pb-2">
-          <p class="text-sm">未登录</p>
-          <Button as-child variant="outline" size="sm" class="mt-2"><RouterLink to="/login">登录 / 注册</RouterLink></Button>
+        <div v-else class="border-t px-3 pt-4 pb-2" :class="sidebarCollapsed ? 'md:flex md:justify-center md:border-0 md:px-0 md:pt-3' : ''">
+          <RouterLink to="/login" class="sb-label text-sm">登录 / 注册</RouterLink>
+          <RouterLink v-if="sidebarCollapsed" to="/login" title="登录 / 注册" aria-label="登录 / 注册" class="hidden size-9 items-center justify-center rounded-lg text-neutral-600 hover:bg-black/5 md:inline-flex"><LogIn class="size-4" /></RouterLink>
         </div>
       </div>
     </aside>
@@ -259,3 +303,115 @@ async function confirmDeleteConversation() {
     />
   </div>
 </template>
+
+<style scoped>
+/* 同一条缓动曲线（iOS 式快出慢收）驱动宽度、内边距、位移，收起/展开才是"滑动"而不是"跳变" */
+.sb-aside {
+  transition:
+    width 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    padding 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    transform 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    box-shadow 300ms ease;
+}
+
+/* 行内图标与文字的间距、左右留白跟着一起收，图标才会始终居中 */
+.sb-row {
+  transition:
+    background-color 140ms ease,
+    color 140ms ease,
+    gap 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    padding 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sb-label,
+.sb-brand,
+.sb-user-text {
+  max-width: 14rem;
+  overflow: hidden;
+  white-space: nowrap;
+  transition:
+    max-width 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    max-height 320ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 180ms ease 60ms,
+    transform 320ms cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+.sb-label {
+  display: inline-block;
+}
+
+/* 用户信息是两行块，光收宽度会留一截空白，高度也要收掉 */
+.sb-user-text {
+  max-height: 3rem;
+}
+
+.sb-recent {
+  transition:
+    opacity 200ms ease 60ms,
+    visibility 0s linear 0s;
+}
+
+.sb-extra {
+  max-height: 6rem;
+  overflow: hidden;
+  transition:
+    max-height 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    margin-top 300ms cubic-bezier(0.32, 0.72, 0, 1),
+    opacity 160ms ease;
+}
+
+@media (min-width: 768px) {
+  .sb-aside[data-collapsed='true'] .sb-label,
+  .sb-aside[data-collapsed='true'] .sb-brand,
+  .sb-aside[data-collapsed='true'] .sb-user-text {
+    max-width: 0;
+    opacity: 0;
+    transform: translateX(-8px);
+    pointer-events: none;
+  }
+
+  .sb-aside[data-collapsed='true'] .sb-user-text {
+    max-height: 0;
+  }
+
+  .sb-aside[data-collapsed='true'] .sb-recent {
+    opacity: 0;
+    visibility: hidden;
+    transition:
+      opacity 120ms ease,
+      visibility 0s linear 260ms;
+  }
+
+  .sb-aside[data-collapsed='true'] .sb-extra {
+    max-height: 0;
+    margin-top: 0;
+    opacity: 0;
+  }
+}
+
+/* 移动端抽屉的遮罩 */
+.sb-fade-enter-active,
+.sb-fade-leave-active {
+  transition: opacity 220ms ease;
+}
+
+.sb-fade-enter-from,
+.sb-fade-leave-to {
+  opacity: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sb-aside,
+  .sb-row,
+  .sb-label,
+  .sb-brand,
+  .sb-user-text,
+  .sb-recent,
+  .sb-extra,
+  .sb-fade-enter-active,
+  .sb-fade-leave-active {
+    transition-duration: 1ms !important;
+    transition-delay: 0ms !important;
+  }
+}
+</style>

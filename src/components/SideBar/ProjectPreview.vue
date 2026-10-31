@@ -1,7 +1,9 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue'
+import { computed, nextTick, onUnmounted, ref, watch } from 'vue'
 import { Button } from '@/components/ui/button'
+import RefreshButton from '@/components/RefreshButton.vue'
 import { Switch } from '@/components/ui/switch'
+import { useTabRefresh } from '@/lib/tab-refresh'
 import * as api from '@/api/docker'
 import { request } from '@/lib/http'
 import { installSelector, type SelectedElement } from '@/lib/preview-selector'
@@ -14,14 +16,16 @@ const url = ref('')
 const opened = ref('')
 const selecting = ref(false)
 const error = ref('')
+const loading = ref(false)
 const frame = ref<HTMLIFrameElement | null>(null)
 let selector: ReturnType<typeof installSelector> | null = null
 const current = computed(() => addresses.value.find(item => item.url === url.value))
 async function load() {
+  loading.value = true
   try {
     const [containers, deployments] = await Promise.all([api.containers(), api.deployments()])
     const site = deployments.find(d => d.applicationId === props.applicationId && d.type === 'STATIC')
-    const list: Address[] = [{ label: '工作区静态页面 · 实时文件', url: new URL(`/sites/${props.applicationId}/__preview/`, location.origin).href, directory: site?.directory ?? '.' }]
+    const list: Address[] = [{ label: '工作区静态页面', url: new URL(`/sites/${props.applicationId}/__preview/`, location.origin).href, directory: site?.directory ?? '.' }]
     list.push(...deployments.filter(d => d.applicationId === props.applicationId && d.type === 'STATIC').map(d => ({ label: '已发布静态网站', url: new URL(d.url, location.origin).href })))
     for (const c of containers.filter(c => c.applicationId === props.applicationId && c.status === 'RUNNING' && c.hostPort)) {
       list.push({ label: `${c.templateId} · ${c.name.slice(-8)} · 主端口 ${c.internalPort}`, url: new URL(`/services/${c.id}/1/`, location.origin).href, containerId: c.id })
@@ -30,6 +34,7 @@ async function load() {
     addresses.value = list
     if (!url.value) url.value = list[0]?.url ?? ''
   } catch (cause) { error.value = cause instanceof Error ? cause.message : '加载失败' }
+  finally { loading.value = false }
 }
 async function authorize() {
   const address = current.value
@@ -77,13 +82,14 @@ function loaded() {
 watch(selecting, value => selector?.setEnabled(value))
 watch(() => props.running, (running, previous) => { if (previous && !running && opened.value) void preview() })
 watch(() => props.revision, () => { if (!props.running && opened.value) void preview() })
-onMounted(load)
+/** 地址列表（容器 / 已发布站点）可能被外部改动，重新进标签时超过 60s 就静默刷新一次 */
+useTabRefresh(load, { ttl: 60_000 })
 onUnmounted(() => selector?.dispose())
 </script>
 
 <template>
   <section class="space-y-4">
-    <div class="flex items-center justify-between"><h2 class="text-sm font-medium">预览</h2><Button size="sm" variant="ghost" @click="load">刷新地址</Button></div>
+    <div class="flex items-center justify-between"><h2 class="text-sm font-medium">预览</h2><RefreshButton variant="ghost" class="size-7" :loading="loading" label="刷新地址" @click="load" /></div>
     <ul class="space-y-2">
       <li v-for="address in addresses" :key="address.url" class="rounded-lg border p-3">
         <p class="text-xs text-neutral-500">{{ address.label }}</p>

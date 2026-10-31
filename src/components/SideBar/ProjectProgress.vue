@@ -2,7 +2,7 @@
 import { onMounted, ref } from 'vue'
 import { getProgress } from '@/api/applications'
 import type { ProgressSummary } from '@/api/applications'
-import { Button } from '@/components/ui/button'
+import RefreshButton from '@/components/RefreshButton.vue'
 
 const props = defineProps<{ applicationId: string }>()
 const progress = ref<ProgressSummary | null>(null)
@@ -24,7 +24,7 @@ onMounted(load)
   <section class="space-y-3">
     <div class="flex items-center justify-between gap-3">
       <h3 class="text-sm font-medium">开发进度</h3>
-      <Button variant="ghost" size="sm" :disabled="loading" @click="load">{{ loading ? '刷新中…' : '刷新' }}</Button>
+      <RefreshButton variant="ghost" class="size-7" :loading="loading" label="刷新开发进度" @click="load" />
     </div>
     <p v-if="error" role="alert" class="text-xs leading-6 text-red-600">{{ error }}</p>
     <template v-if="progress && !error">
