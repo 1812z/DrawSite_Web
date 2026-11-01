@@ -253,7 +253,7 @@ async function confirmDeleteConversation() {
                   <button class="shrink-0 rounded p-1 text-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/10" aria-label="重命名会话" title="重命名" @click="openRenameConversation(application.id, conversation)"><Pencil class="size-3" /></button>
                   <button class="shrink-0 rounded p-1 text-neutral-400 opacity-0 transition-opacity group-hover:opacity-100 hover:bg-black/10 hover:text-red-600" aria-label="删除会话" title="删除" @click="openDeleteConversation(application.id, conversation)"><Trash2 class="size-3" /></button>
                 </div>
-                <InfiniteLoader compact :has-more="workspace.hasMoreConversations(application.id)" :loading="!!workspace.conversationsLoading[application.id]" :count="workspace.conversationsByApplication[application.id]?.length ?? 0" :error="workspace.conversationsError[application.id]" @load="workspace.conversationsByApplication[application.id] ? workspace.loadMoreConversations(application.id) : workspace.loadConversations(application.id)" />
+                <InfiniteLoader compact hide-skeleton :has-more="workspace.hasMoreConversations(application.id)" :loading="!!workspace.conversationsLoading[application.id]" :count="workspace.conversationsByApplication[application.id]?.length ?? 0" :error="workspace.conversationsError[application.id]" @load="workspace.conversationsByApplication[application.id] ? workspace.loadMoreConversations(application.id) : workspace.loadConversations(application.id)" />
               </div>
             </div>
           </div>
