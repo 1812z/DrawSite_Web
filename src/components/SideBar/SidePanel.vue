@@ -88,7 +88,7 @@ const activeProps = computed<Record<string, unknown>>(() => {
       // 部署视图认的是 projectId，且换应用要换实例，key 由外层 KeepAlive 的 applicationId 保证
       return { projectId: props.applicationId }
     case 'preview':
-      return { ...base, onSelectElement: (element: SelectedElement) => emit('select-element', element) }
+      return { applicationId: props.applicationId, running: props.running, onSelectElement: (element: SelectedElement) => emit('select-element', element) }
     default:
       return base
   }

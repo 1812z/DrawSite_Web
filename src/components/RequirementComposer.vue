@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onMounted, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, useId, watch } from 'vue'
 import { ArrowUp, FileText, LayoutTemplate, ListChecks, Square } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 
@@ -38,16 +38,20 @@ const canSubmit = computed(() => props.modelValue.trim().length > 0)
 /** 输入框默认一行，随内容长高，最多 MAX_ROWS 行，超过则内部滚动。 */
 const MAX_ROWS = 15
 const textareaRef = ref<HTMLTextAreaElement | null>(null)
+const inputId = useId()
+let resizeObserver: ResizeObserver | null = null
+let measuredWidth = 0
 
 function resize() {
   const element = textareaRef.value
-  if (!element) return
+  // display:none 时 scrollHeight 为 0，不能用它覆盖有效高度。
+  if (!element || element.clientWidth === 0) return
   const style = window.getComputedStyle(element)
   const lineHeight = Number.parseFloat(style.lineHeight) || 24
   const padding = Number.parseFloat(style.paddingTop) + Number.parseFloat(style.paddingBottom)
   const maxHeight = lineHeight * MAX_ROWS + padding
   element.style.height = 'auto'
-  const next = Math.min(element.scrollHeight, maxHeight)
+  const next = Math.max(lineHeight + padding, Math.min(element.scrollHeight, maxHeight))
   element.style.height = `${next}px`
   element.style.overflowY = element.scrollHeight > maxHeight ? 'auto' : 'hidden'
 }
@@ -77,7 +81,18 @@ function submit() {
 
 /** 示例卡片等程序化赋值后同步高度。 */
 watch(() => props.modelValue, () => { void nextTick(resize) })
-onMounted(resize)
+onMounted(() => {
+  resize()
+  resizeObserver = new ResizeObserver(([entry]) => {
+    const width = entry?.contentRect.width ?? 0
+    if (width <= 0) { measuredWidth = 0; return }
+    if (width === measuredWidth) return
+    measuredWidth = width
+    resize()
+  })
+  if (textareaRef.value) resizeObserver.observe(textareaRef.value)
+})
+onBeforeUnmount(() => resizeObserver?.disconnect())
 </script>
 
 <template>
@@ -88,22 +103,23 @@ onMounted(resize)
       <p class="mt-3 text-sm leading-7 text-muted-foreground">{{ subheading }}</p>
     </div>
     <form class="relative rounded-2xl border bg-white p-4 shadow-[0_2px_12px_rgba(0,0,0,0.03)]" @submit.prevent="submit">
-      <label class="sr-only" for="requirement">应用需求</label>
+      <label class="sr-only" :for="inputId">应用需求</label>
       <textarea
-        id="requirement"
+        :id="inputId"
         ref="textareaRef"
         :value="modelValue"
         rows="1"
         maxlength="20000"
         :placeholder="placeholder"
-        class="block w-full resize-none overflow-hidden bg-transparent px-1 py-1 pr-12 text-sm leading-7 outline-none placeholder:text-neutral-400"
+        :disabled="disabled"
+        class="block min-h-9 w-full resize-none overflow-hidden bg-transparent px-1 py-1 pr-12 text-sm leading-7 outline-none placeholder:text-neutral-400"
         @input="onInput"
         @keydown="onKeydown"
       />
       <div v-if="$slots.toolbar" class="mt-3 flex flex-wrap items-center gap-2 pr-14">
         <slot name="toolbar" />
       </div>
-      <p v-if="hint" class="mt-3 pr-14 text-xs text-muted-foreground">{{ hint }}</p>
+      <p v-if="hint" class="mt-3 truncate pr-14 text-xs text-muted-foreground" :title="hint">{{ hint }}</p>
       <!-- 右下角按钮同一位置：生成中显示停止图标，平时显示发送图标 -->
       <Button
         v-if="running"

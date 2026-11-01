@@ -10,6 +10,6 @@ export default defineConfig({
   server: {
     port: 5173,
     strictPort: true,
-    proxy: { '/api': { target: 'http://43.142.26.2:9988', changeOrigin: true } },
+    proxy: { '/api': { target: 'https://ai.1812z.top', changeOrigin: true } },
   },
 })

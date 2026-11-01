@@ -25,12 +25,12 @@ const props = defineProps<{
   settingsLoaded: boolean
   /** 有任务在进行（发送中 / 生成中 / 压缩上下文）：整体禁用输入与选项 */
   submitting: boolean
+  disabled: boolean
   /** 仅“正在生成回复”，用来切换停止按钮与提示文案 */
   running: boolean
   stopping: boolean
   error: string
   selectedElement: SelectedElement | null
-  showIntro: boolean
 }>()
 
 /** 提交时一并下发本次的调用选项，父级不再需要自己拼 */
@@ -90,8 +90,10 @@ const effectiveToolsEnabled = computed(() => canUseTools.value && selectedToolId
 const hint = computed(() => {
   if (props.running) return '正在生成回复，可点击“停止”中断'
   if (props.submitting) return '提交中…'
+  if (!props.settingsLoaded) return '正在加载模型配置…'
   if (!hasModel.value) return '平台未配置可用模型'
-  return ''
+  if (props.disabled) return '请选择会话并等待消息加载完成'
+  return 'Enter 发送，Shift + Enter 换行'
 })
 
 async function loadTools() {
@@ -123,7 +125,7 @@ function buildPayload(content: string): ComposerSubmit {
 
 function handleSubmit(content: string) {
   const text = content.trim()
-  if (!text || props.submitting) return
+  if (!text || props.disabled || props.submitting) return
   emit('submit', buildPayload(text))
 }
 
@@ -142,17 +144,17 @@ onMounted(() => {
 </script>
 
 <template>
-  <div class="sticky bottom-0 mt-4 bg-background pt-3 pb-6">
+  <div class="shrink-0 bg-background pt-3 pb-6">
     <p v-if="settingsLoaded && !hasModel" role="status" class="mb-3 rounded-lg border border-dashed px-4 py-3 text-xs leading-6 text-muted-foreground">平台尚未配置可用模型。管理员在“设置 → 平台管理”添加并启用模型后即可开始对话。</p>
     <SelectedElementCard v-if="selectedElement" :key="selectedElement.url + selectedElement.selector" class="mb-2" :element="selectedElement" cancellable @cancel="emit('cancel-element')" />
     <RequirementComposer
       v-model="draftValue"
       heading="这个会话，想构建什么？"
       subheading="描述应用需求，提交后由所选模型生成回复。"
-      :show-intro="showIntro"
+      :show-intro="false"
       :hint="hint"
-      :disabled="submitting"
-      :running="submitting"
+      :disabled="disabled || submitting"
+      :running="running"
       :stopping="stopping"
       @submit="handleSubmit"
       @stop="emit('stop')"

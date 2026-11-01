@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref, watch } from 'vue'
-import { Ban, Check, ChevronRight, LoaderCircle, X } from '@lucide/vue'
+import { Ban, Check, ChevronDown, ChevronRight, LoaderCircle, X } from '@lucide/vue'
 import { Button } from '@/components/ui/button'
 import MarkdownView from '@/components/MarkdownView.vue'
 import type { RunStep } from '@/api/agent'
@@ -32,6 +32,25 @@ watch(() => props.running, (value) => {
   if (!value) expanded.value = false
 })
 
+// 每个 step 的内容（思考/工具参数与结果）默认折叠，点标题行右侧箭头展开
+const expandedSteps = ref<Set<string>>(new Set())
+
+function toggleStep(id: string) {
+  const next = new Set(expandedSteps.value)
+  if (next.has(id)) next.delete(id)
+  else next.add(id)
+  expandedSteps.value = next
+}
+
+function isStepExpanded(id: string): boolean {
+  return expandedSteps.value.has(id)
+}
+
+// 回复正文（RESPONSE）不折叠
+function isCollapsible(step: RunStep): boolean {
+  return step.type !== 'RESPONSE' && Boolean(step.content)
+}
+
 const roundCount = computed(() => new Set(visibleSteps.value.map((step) => step.round)).size)
 const hasFailure = computed(() => visibleSteps.value.some((step) => step.status === 'FAILED'))
 
@@ -61,7 +80,11 @@ function duration(step: RunStep): string {
 
     <ol v-if="expanded" class="mt-1 space-y-1.5 border-l border-neutral-200 pl-3">
       <li v-for="step in visibleSteps" :key="step.id" class="text-[11px]">
-        <div class="flex items-center gap-1.5 text-neutral-600">
+        <div
+          class="flex items-center gap-1.5 text-neutral-600"
+          :class="isCollapsible(step) ? 'w-fit cursor-pointer rounded hover:bg-black/[0.04]': ''"
+          @click="isCollapsible(step) && toggleStep(step.id)"
+        >
           <LoaderCircle v-if="step.status === 'RUNNING'" class="size-3 shrink-0 animate-spin text-neutral-400" />
           <Check v-else-if="step.status === 'SUCCEEDED'" class="size-3 shrink-0 text-neutral-400" />
           <X v-else-if="step.status === 'FAILED'" class="size-3 shrink-0 text-red-600" />
@@ -69,16 +92,22 @@ function duration(step: RunStep): string {
           <span class="font-medium">{{ step.title }}</span>
           <code v-if="step.toolName" class="shrink-0 font-mono text-[10px] text-neutral-400">{{ step.toolName }}</code>
           <span v-if="roundCount > 1" class="shrink-0 text-[10px] text-neutral-400">第 {{ step.round }} 轮</span>
-          <span v-if="duration(step)" class="ml-auto shrink-0 text-[10px] text-neutral-400">{{ duration(step) }}</span>
+          <span v-if="duration(step)" class="shrink-0 text-[10px] text-neutral-400">{{ duration(step) }}</span>
+          <!-- 展开箭头：紧跟时间右侧，默认折叠，展开后箭头朝下 -->
+          <ChevronDown v-if="isCollapsible(step) && isStepExpanded(step.id)" class="size-3 shrink-0 text-neutral-400" />
+          <ChevronRight v-else-if="isCollapsible(step)" class="size-3 shrink-0 text-neutral-400" />
         </div>
 
-        <!-- 工具的参数与结果最多各 20000 字符，必须默认折叠、按需展开 -->
-        <details v-if="step.type === 'TOOL' && step.content" class="mt-1">
-          <summary class="cursor-pointer list-none text-[10px] text-neutral-400 select-none hover:text-neutral-600 [&::-webkit-details-marker]:hidden">参数与结果</summary>
-          <pre class="mt-1 max-h-80 overflow-auto rounded-md bg-black/[0.04] px-2 py-1.5 font-mono text-[10px] leading-4 whitespace-pre-wrap break-words" v-memo="[step.content]">{{ step.content }}</pre>
-        </details>
-        <div v-else-if="step.content" class="mt-1 max-h-60 overflow-y-auto">
-          <MarkdownView v-memo="[step.content]" class="markdown-body--compact" :content="step.content" />
+        <!-- 回复正文（RESPONSE）始终展示；思考 / 工具参数默认折叠、点击箭头展开 -->
+        <div v-if="step.content && (step.type === 'RESPONSE' || isStepExpanded(step.id))">
+          <pre
+            v-if="step.type === 'TOOL'"
+            class="mt-1 max-h-80 overflow-auto rounded-md bg-black/[0.04] px-2 py-1.5 font-mono text-[10px] leading-4 whitespace-pre-wrap break-words"
+            v-memo="[step.content]"
+          >{{ step.content }}</pre>
+          <div v-else class="mt-1 max-h-60 overflow-y-auto">
+            <MarkdownView v-memo="[step.content]" class="markdown-body--compact" :content="step.content" />
+          </div>
         </div>
       </li>
     </ol>

@@ -17,7 +17,7 @@ let lastRequestAt = 0
 const percent = computed(() => value.value ? Math.min(100, Math.round(value.value.usedTokens / value.value.budgetTokens * 100)) : 0)
 const base = () => `/applications/${props.applicationId}/conversations/${props.conversationId}/context`
 function tokens(count: number) { return count >= 1000 ? `${(count / 1000).toFixed(1)}K` : String(count) }
-async function load() {
+async function load(force = false) {
   if (!props.conversationId) { value.value = null; return }
   /**
    * 400ms 内的同参数请求直接合并。
@@ -25,7 +25,7 @@ async function load() {
    * 两个触发点会各发一次请求；这里保证同参数的第二次不再发。
    */
   const key = `${props.conversationId}:${props.memoryEnabled}`
-  if (key === lastKey && Date.now() - lastRequestAt < 400) return
+  if (!force && key === lastKey && Date.now() - lastRequestAt < 400) return
   lastKey = key
   lastRequestAt = Date.now()
   const current = generation
@@ -57,7 +57,7 @@ async function compress() {
  * 上下文占用只随消息增减变化，而消息增减必然对应一轮任务结束，所以改用 running 的下降沿。
  */
 watch(() => [props.conversationId, props.memoryEnabled], () => { generation++; value.value = null; notice.value = ''; emit('progress', '', false); void load() }, { immediate: true })
-watch(() => props.running, (next, previous) => { if (previous && !next) void load() })
+watch(() => props.running, (next, previous) => { if (previous && !next) void load(true) })
 const timer = setInterval(() => { if (props.running || busy.value) void load() }, 5000)
 onUnmounted(() => { generation++; clearInterval(timer) })
 </script>

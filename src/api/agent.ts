@@ -130,19 +130,37 @@ export const startRun = (applicationId: string, conversationId: string, payload:
 
 export const getRun = (applicationId: string, conversationId: string, runId: string) =>
   request<RunView>(`${runsBase(applicationId, conversationId)}/${runId}`)
+export const getLatestRun = (applicationId: string, conversationId: string) =>
+  request<RunView | null>(`${runsBase(applicationId, conversationId)}/latest`)
 
 export const cancelRun = (applicationId: string, conversationId: string, runId: string) =>
   request<RunView>(`${runsBase(applicationId, conversationId)}/${runId}/cancel`, { method: 'POST' })
 
 export interface StreamHandlers {
   signal?: AbortSignal
-  /** 每约 300ms 收到完整快照，前端整体替换内容，不按增量累加。 */
+  /** 首次快照或后续增量合并后的完整状态，视图无需自行拼接。 */
   onSnapshot?: (run: RunView) => void
   /** 终态快照，之后服务端关闭连接。 */
   onDone?: (run: RunView) => void
 }
 
-function dispatchEvent(raw: string, handlers: StreamHandlers): void {
+interface TextPatch { offset: number; text: string }
+interface RunDelta {
+  sequence: number
+  state: RunView
+  content: TextPatch | null
+  steps: { state: RunStep; content: TextPatch | null }[]
+  removed: string[]
+}
+interface StreamState { run: RunView | null; sequence: number }
+function applyText(before: string, patch: TextPatch | null): string {
+  if (!patch) return before
+  if (!Number.isInteger(patch.offset) || patch.offset < 0 || patch.offset > before.length) {
+    throw new ApiError('流式内容不同步，请刷新会话', 'STREAM_OUT_OF_SYNC', 0)
+  }
+  return before.slice(0, patch.offset) + patch.text
+}
+function dispatchEvent(raw: string, handlers: StreamHandlers, stream: StreamState): void {
   let name = 'message'
   const data: string[] = []
   for (const line of raw.split(/\r?\n/)) {
@@ -151,14 +169,36 @@ function dispatchEvent(raw: string, handlers: StreamHandlers): void {
     else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''))
   }
   if (data.length === 0) return
-  let run: RunView
+  let payload: unknown
   try {
-    run = JSON.parse(data.join('\n')) as RunView
+    payload = JSON.parse(data.join('\n'))
   } catch {
     return
   }
-  if (name === 'done') handlers.onDone?.(run)
-  else handlers.onSnapshot?.(run)
+  if (name === 'snapshot') {
+    stream.run = payload as RunView
+    stream.sequence = 0
+    handlers.onSnapshot?.(stream.run)
+  } else if (name === 'delta') {
+    const delta = payload as RunDelta
+    if (!stream.run || delta.state.id !== stream.run.id || delta.sequence !== stream.sequence + 1) {
+      throw new ApiError('流式事件不同步，请刷新会话', 'STREAM_OUT_OF_SYNC', 0)
+    }
+    const removed = new Set(delta.removed)
+    const steps = new Map(stream.run.steps.filter(step => !removed.has(step.id)).map(step => [step.id, step]))
+    for (const change of delta.steps) {
+      const before = steps.get(change.state.id)
+      steps.set(change.state.id, { ...change.state, content: applyText(before?.content ?? '', change.content) })
+    }
+    stream.run = { ...delta.state, content: applyText(stream.run.content, delta.content), steps: [...steps.values()] }
+    stream.sequence = delta.sequence
+    handlers.onSnapshot?.(stream.run)
+  } else if (name === 'done') {
+    // 兼容旧后端的终态快照，新协议仅发送结束标记。
+    const legacy = payload as Partial<RunView>
+    if (legacy.status) stream.run = payload as RunView
+    if (stream.run) handlers.onDone?.(stream.run)
+  }
 }
 
 /**
@@ -193,6 +233,7 @@ export async function streamRun(
   const decoder = new TextDecoder()
   const separator = /\r?\n\r?\n/
   let buffer = ''
+  const stream: StreamState = { run: null, sequence: 0 }
   try {
     for (;;) {
       const { value, done } = await reader.read()
@@ -202,7 +243,18 @@ export async function streamRun(
       while (match) {
         const chunk = buffer.slice(0, match.index)
         buffer = buffer.slice(match.index + match[0].length)
-        if (chunk.trim()) dispatchEvent(chunk, handlers)
+        if (chunk.trim()) {
+          dispatchEvent(chunk, handlers, stream)
+          // 一个网络分片可能含多条 SSE，让 Vue 有机会提交 DOM 并绘制，避免整批只显示最后状态。
+          if (stream.run && !document.hidden) await new Promise<void>(resolve => {
+            const fallback = window.setTimeout(resolve, 50)
+            window.requestAnimationFrame(() => {
+              window.clearTimeout(fallback)
+              window.setTimeout(resolve, 0)
+            })
+          })
+          if (handlers.signal?.aborted) return
+        }
         match = separator.exec(buffer)
       }
     }

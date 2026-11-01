@@ -1,4 +1,5 @@
 import { clearSession, getToken } from '@/lib/session'
+import { redirectToLogin } from '@/lib/navigation'
 
 export interface ApiResponse<T> {
   code: string
@@ -21,13 +22,6 @@ export class ApiError extends Error {
 /** 401 且请求携带过 Token 时触发，通知认证状态清理并跳转登录页。 */
 export const UNAUTHORIZED_EVENT = 'drawsite:unauthorized'
 
-async function redirectToLogin(): Promise<void> {
-  const { router } = await import('@/router')
-  const current = router.currentRoute.value
-  if (current.path === '/login') return
-  void router.replace({ path: '/login', query: current.path === '/' ? {} : { redirect: current.fullPath } })
-}
-
 /** 统一失败处理：401 且请求携带过 Token 时清理会话并跳转登录页。 */
 export async function rejectResponse<T>(response: Response, token: string, body: ApiResponse<T> | null): Promise<ApiError> {
   const code = body?.code ?? 'NETWORK_ERROR'
@@ -36,7 +30,8 @@ export async function rejectResponse<T>(response: Response, token: string, body:
   if (response.status === 401 && token) {
     clearSession()
     window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT))
-    await redirectToLogin()
+    // 具体跳转动作由 main.ts 注入，这里不 import router（否则成环或触发无效动态导入）
+    redirectToLogin()
   }
   return new ApiError(message, code, response.status)
 }

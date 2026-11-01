@@ -40,6 +40,7 @@ const appError = ref('')
 
 // 当前会话（来自左侧层级树的选中状态）
 const selectedConversationId = ref('')
+let conversationVersion = 0
 const selectedElement = ref<SelectedElement | null>(null)
 
 // 消息
@@ -48,6 +49,7 @@ const messagesTotal = ref(0)
 const messagesPage = ref(0)
 const messagesLoading = ref(false)
 const messagesError = ref('')
+const restoringConversation = ref(false)
 const draftInput = ref('')
 const sending = ref(false)
 const sendError = ref('')
@@ -147,6 +149,8 @@ let titleRefreshTimer: number | null = null
 const containerRef = ref<HTMLElement | null>(null)
 
 onBeforeUnmount(() => {
+  conversationVersion++
+  messageRequest++
   streamController?.abort()
   streamController = null
   if (titleRefreshTimer !== null) window.clearTimeout(titleRefreshTimer)
@@ -190,16 +194,9 @@ function contextProgress(text: string, busy: boolean) {
 }
 watch(selectedConversationId, () => { compressionText.value = ''; compressingContext.value = false })
 const submitting = computed(() => sending.value || runRunning.value || compressingContext.value)
-/**
- * 会话没有消息时输入框居中（带引导文案与示例卡片），发出第一条后落到底部。
- * 加上 !messagesLoading 是为了切换会话时不要先居中再跳走。
- */
-const showComposerIntro = computed(() => !messagesLoading.value && messages.value.length === 0 && !runRunning.value && !streamingText.value)
+const showConversationIntro = computed(() => messagesPage.value > 0 && !messagesLoading.value && messages.value.length === 0 && !submitting.value && !streamingText.value)
 
-/**
- * 对话区滚动容器。输入框悬浮在它上面，新内容必须自己滚到底部，
- * 否则最新一条会停在输入框后面看不见。
- */
+// 只有消息区滚动，输入区作为固定高度的兄弟节点常驻底部。
 const scrollRef = ref<HTMLElement | null>(null)
 /** 用户手动往上翻后停止自动跟随，滚回底部再恢复。 */
 let followBottom = true
@@ -213,13 +210,18 @@ function onScroll() {
 /** force=true 用于用户自己触发的跳转（提交、切换会话、刷新），忽略当前滚动位置。 */
 function scrollToBottom(force = false) {
   if (!force && !followBottom) return
+  const version = conversationVersion
   void nextTick(() => {
+    if (version !== conversationVersion) return
     const element = scrollRef.value
     if (!element) return
     element.scrollTop = element.scrollHeight
     followBottom = true
   })
 }
+watch(appLoading, (loading) => {
+  if (!loading) scrollToBottom(true)
+})
 /** 底部输入组件 */
 const composerRef = ref<{ submit: (content?: string) => void } | null>(null)
 
@@ -267,6 +269,8 @@ async function loadApplication() {
 }
 
 async function selectConversation(id: string) {
+  conversationVersion++
+  sending.value = false
   selectedConversationId.value = id
   if (route.query.conversation !== id) {
     void router.replace({ query: { ...route.query, conversation: id } })
@@ -284,10 +288,14 @@ function resetRunState() {
   cancelling.value = false
   clarificationHistory.value = []
   questionError.value = ''
+  answeringQuestions.value = false
 }
 
 /** 会话被删除或从 URL 上移除时清空工作区，避免停留在已经不存在的内容上。 */
 function clearConversation() {
+  restoringConversation.value = false
+  conversationVersion++
+  sending.value = false
   messageRequest++
   messagesLoading.value = false
   resetRunState()
@@ -302,6 +310,9 @@ function clearConversation() {
 
 async function loadMessages() {
   if (!selectedConversationId.value) return
+  const conversationId = selectedConversationId.value
+  const version = conversationVersion
+  restoringConversation.value = true
   resetRunState()
   messages.value = []
   messagesPage.value = 0
@@ -310,21 +321,33 @@ async function loadMessages() {
   messagesLoading.value = false
   followBottom = true
   await loadMoreMessages()
-  const conversationId = selectedConversationId.value
+  if (version !== conversationVersion) return
   try {
     const items = await agentApi.listClarifications(applicationId, conversationId)
-    if (selectedConversationId.value !== conversationId) return
+    if (version !== conversationVersion) return
     clarificationHistory.value = items
-    const pending = items.find(item => item.status === 'PENDING')
-    if (pending) {
-      const run = await agentApi.getRun(applicationId, conversationId, pending.runId)
-      if (selectedConversationId.value !== conversationId) return
+  } catch (cause) {
+    if (version === conversationVersion) questionError.value = describeError(cause, '加载询问失败')
+  }
+  if (version !== conversationVersion) return
+  try {
+    const run = await agentApi.getLatestRun(applicationId, conversationId)
+    if (version !== conversationVersion) return
+    // 普通生成也要恢复，不能仅在存在待回答问题时订阅。
+    if (run?.status === 'RUNNING') {
       activeRun.value = run
-      void subscribeRun(pending.runId)
+      streamingText.value = run.content ?? ''
+      void subscribeRun(run.id)
+    } else if (run?.assistantMessageId && !messages.value.some(message => message.id === run.assistantMessageId)) {
+      // 消息列表返回后恰好完成，补取落库结果，避免错过最后一条回复。
+      await refreshMessages()
     }
   } catch (cause) {
-    if (selectedConversationId.value === conversationId) questionError.value = describeError(cause, '加载询问失败')
+    if (version === conversationVersion) runNotice.value = describeError(cause, '恢复对话任务失败')
   }
+  if (version !== conversationVersion) return
+  restoringConversation.value = false
+  flushPendingPrompt()
   scrollToBottom(true)
 }
 
@@ -347,8 +370,11 @@ async function loadMoreMessages() {
     messages.value = [...new Map([...result.records, ...messages.value].map(item => [item.id, item])).values()]
     messagesTotal.value = result.total
     messagesPage.value = nextPage
+    messagesLoading.value = false
     await nextTick()
-    if (!initial && viewport && request === messageRequest) viewport.scrollTop = oldTop + viewport.scrollHeight - oldHeight
+    if (request !== messageRequest) return
+    if (initial) scrollToBottom(true)
+    else if (viewport) viewport.scrollTop = oldTop + viewport.scrollHeight - oldHeight
   } catch (cause) {
     if (request === messageRequest) messagesError.value = describeError(cause, '加载消息失败')
   } finally {
@@ -458,7 +484,8 @@ async function loadPublicSettings() {
  */
 async function submitMessage(payload: { content: string; reasoningEffort?: ReasoningEffort; toolsEnabled?: boolean; toolNames?: string[] }) {
   const conversationId = selectedConversationId.value
-  if (!conversationId || submitting.value) return
+  const version = conversationVersion
+  if (!conversationId || restoringConversation.value || submitting.value || messagesPage.value === 0 || !settingsLoaded.value) return
   if (!selectedModelId.value) {
     sendError.value = '平台尚未配置可用模型，请联系管理员在平台设置中添加并启用模型。'
     return
@@ -495,11 +522,13 @@ async function submitMessage(payload: { content: string; reasoningEffort?: Reaso
       toolNames: payload.toolNames,
     })
   } catch (cause) {
+    if (version !== conversationVersion) return
     messages.value = messages.value.filter((item) => !item.id.startsWith(OPTIMISTIC_PREFIX))
     sendError.value = describeError(cause, '发送失败')
     sending.value = false
     return
   }
+  if (version !== conversationVersion) return
   // 服务端已保存该消息，用真实 ID 替换乐观记录（走数组赋值以触发响应式）
   const optimisticIndex = messages.value.findIndex((item) => item.id.startsWith(OPTIMISTIC_PREFIX))
   if (optimisticIndex >= 0) {
@@ -523,7 +552,7 @@ async function submitMessage(payload: { content: string; reasoningEffort?: Reaso
 let pendingPromptSent = false
 
 function flushPendingPrompt() {
-  if (pendingPromptSent || sending.value) return
+  if (pendingPromptSent || submitting.value || restoringConversation.value || !composerRef.value) return
   const conversationId = selectedConversationId.value
   if (!conversationId || !settingsLoaded.value) return
   if (messagesLoading.value || messagesPage.value === 0) return
@@ -534,25 +563,27 @@ function flushPendingPrompt() {
   draftInput.value = content
   // 等一帧让底部输入组件收到新的 draft 再以它提交（组件可能在同一轮渲染里刚挂载）
   void nextTick(() => {
+    if (conversationId !== selectedConversationId.value) { pendingPromptSent = false; return }
     if (composerRef.value) composerRef.value.submit(content)
     else pendingPromptSent = false
   })
 }
 
 watch(
-  [selectedConversationId, settingsLoaded, messagesLoading, messagesPage, sending],
+  [selectedConversationId, settingsLoaded, messagesLoading, messagesPage, sending, composerRef],
   flushPendingPrompt,
 )
 
 async function subscribeRun(runId: string) {
   const conversationId = selectedConversationId.value
+  const version = conversationVersion
   const controller = new AbortController()
   streamController = controller
   try {
     await agentApi.streamRun(applicationId, conversationId, runId, {
       signal: controller.signal,
       onSnapshot: (snapshot) => {
-        if (snapshot.conversationId !== selectedConversationId.value) return
+        if (controller.signal.aborted || version !== conversationVersion || snapshot.conversationId !== selectedConversationId.value) return
         activeRun.value = snapshot
         if (snapshot.pendingQuestion) {
           clarificationHistory.value = [...clarificationHistory.value.filter(item => item.id !== snapshot.pendingQuestion!.id), snapshot.pendingQuestion]
@@ -560,13 +591,16 @@ async function subscribeRun(runId: string) {
         streamingText.value = snapshot.content ?? ''
         scrollToBottom()
       },
-      onDone: (snapshot) => finalizeRun(snapshot),
+      onDone: (snapshot) => {
+        if (!controller.signal.aborted && version === conversationVersion) finalizeRun(snapshot)
+      },
     })
+    if (controller.signal.aborted || version !== conversationVersion) return
     // 服务端未发送终态就关闭连接时，回查一次任务状态，避免生成态一直锁住输入
     if (activeRun.value?.status === 'RUNNING') await reconcileRun(runId)
   } catch (cause) {
     if (controller.signal.aborted) return
-    if (conversationId !== selectedConversationId.value) return
+    if (version !== conversationVersion) return
     if (activeRun.value?.status === 'RUNNING') {
       runNotice.value = `${describeError(cause, '事件流已中断')} 任务可能仍在服务端继续，稍后可点击“刷新消息”查看结果。`
       preserveInterruptedRun()
@@ -627,8 +661,10 @@ function finalizeRun(snapshot: RunView) {
 /** 事件流未送终态就结束时的兜底：回查一次任务，仍不确定则解除生成态并提示。 */
 async function reconcileRun(runId: string) {
   const conversationId = selectedConversationId.value
+  const version = conversationVersion
   try {
     const snapshot = await agentApi.getRun(applicationId, conversationId, runId)
+    if (version !== conversationVersion) return
     if (snapshot.phase === 'WAITING_USER' && snapshot.pendingQuestion) {
       activeRun.value = snapshot
       return
@@ -640,6 +676,7 @@ async function reconcileRun(runId: string) {
   } catch {
     // 回查失败按中断处理
   }
+  if (version !== conversationVersion) return
   if (activeRun.value?.status === 'RUNNING') {
     runNotice.value = '事件流已结束但任务状态未确认，稍后可点击“刷新消息”查看结果。'
     preserveInterruptedRun()
@@ -648,14 +685,15 @@ async function reconcileRun(runId: string) {
 
 async function stopRun() {
   const run = activeRun.value
+  const version = conversationVersion
   if (!run || cancelling.value) return
   cancelling.value = true
   try {
     await agentApi.cancelRun(applicationId, run.conversationId, run.id)
   } catch (cause) {
-    runNotice.value = describeError(cause, '停止失败')
+    if (version === conversationVersion) runNotice.value = describeError(cause, '停止失败')
   } finally {
-    cancelling.value = false
+    if (version === conversationVersion) cancelling.value = false
   }
 }
 
@@ -675,19 +713,25 @@ function preserveInterruptedRun(run = activeRun.value) {
 async function submitAnswers(item: agentApi.Clarification, answers: agentApi.DetailAnswer[]) {
   if (answeringQuestions.value) return
   const conversationId = selectedConversationId.value
+  const version = conversationVersion
   answeringQuestions.value = true
   questionError.value = ''
   try {
     const answered = await agentApi.answerClarification(applicationId, conversationId, item.id, answers)
-    if (conversationId !== selectedConversationId.value) return
+    if (version !== conversationVersion) return
     clarificationHistory.value = [...clarificationHistory.value.filter(value => value.id !== item.id), answered]
     if (activeRun.value) activeRun.value = { ...activeRun.value, pendingQuestion: null }
     if (!streamController) {
-      activeRun.value = await agentApi.getRun(applicationId, conversationId, item.runId)
+      const run = await agentApi.getRun(applicationId, conversationId, item.runId)
+      if (version !== conversationVersion) return
+      activeRun.value = run
       void subscribeRun(item.runId)
     }
-  } catch (cause) { questionError.value = describeError(cause, '提交回答失败') }
-  finally { answeringQuestions.value = false }
+  } catch (cause) {
+    if (version === conversationVersion) questionError.value = describeError(cause, '提交回答失败')
+  } finally {
+    if (version === conversationVersion) answeringQuestions.value = false
+  }
 }
 
 /**
@@ -698,36 +742,21 @@ async function submitAnswers(item: agentApi.Clarification, answers: agentApi.Det
 // 左侧层级树切换会话时同步；会话被删除后 query 会被清掉，这里同步清空
 watch(
   () => route.query.conversation,
-  async (id) => {
+  (id) => {
     if (typeof id !== 'string') {
       if (selectedConversationId.value) clearConversation()
       return
     }
     if (id === selectedConversationId.value) return
-    if (!workspace.conversationsByApplication[applicationId]) {
-      await workspace.loadConversations(applicationId)
-    }
-    if (workspace.conversationsByApplication[applicationId]?.some((item) => item.id === id)) {
-      await selectConversation(id)
-    } else {
-      clearConversation()
-    }
+    // 侧栏只缓存部分分页，不能用它判断直达链接里的会话是否存在。
+    void selectConversation(id)
   },
+  { immediate: true },
 )
 
 onMounted(() => {
   void loadApplication()
   void loadPublicSettings()
-  void (async () => {
-    const target = typeof route.query.conversation === 'string' ? route.query.conversation : ''
-    if (!target) return
-    if (!workspace.conversationsByApplication[applicationId]) {
-      await workspace.loadConversations(applicationId)
-    }
-    if (workspace.conversationsByApplication[applicationId]?.some((item) => item.id === target)) {
-      await selectConversation(target)
-    }
-  })()
 })
 </script>
 
@@ -740,12 +769,6 @@ onMounted(() => {
   <div v-else-if="application" ref="containerRef" class="flex min-h-0 flex-1">
     <!-- 左半：对话。应用信息与状态在右半概览。 -->
     <div class="relative flex min-w-0 flex-1 flex-col">
-      <!--
-        两个分支都用 v-show 而不是 v-if/v-else：
-        切换会话时 selectedConversationId 只要有一瞬间为空（删除会话、直达链接校验失败等），
-        v-if 就会把整棵会话子树卸载，底部输入框跟着重建（工具目录重拉、选项丢失）。
-        v-show 只切 display，输入框组件始终是同一个实例。
-      -->
       <div v-show="!selectedConversationId" class="min-h-0 flex-1 overflow-y-auto px-4 md:px-6">
         <p class="mx-auto flex w-full max-w-3xl flex-col items-center gap-3 py-16 text-center">
           <MessageSquare class="size-7 text-neutral-300" />
@@ -754,8 +777,8 @@ onMounted(() => {
         </p>
       </div>
 
-      <!-- 对话历史铺满整个高度，输入框贴底悬浮，滚动条贯穿全高 -->
-      <div v-show="!!selectedConversationId" ref="scrollRef" class="min-h-0 flex-1 overflow-y-auto px-4 pt-4 md:px-6 md:pt-6" @scroll.passive="onScroll">
+      <!-- 为滚动条预留空间，历史内容增减时不改变消息区的宽度。 -->
+      <div v-show="!!selectedConversationId" ref="scrollRef" class="min-h-0 flex-1 overflow-y-auto px-4 pt-4 md:px-6 md:pt-6" style="scrollbar-gutter: stable; overflow-anchor: none" @scroll.passive="onScroll">
           <div class="mx-auto flex min-h-full w-full max-w-3xl flex-col">
             <div class="flex-1">
               <!-- 只在已有消息时出现：这时它是「向上加载更多」的骨架；首次加载走下面的居中转圈 -->
@@ -768,6 +791,15 @@ onMounted(() => {
               <p v-if="selectedConversationId && messagesLoading && messages.length === 0" class="flex h-full min-h-24 items-center justify-center gap-2 text-sm text-muted-foreground" role="status" aria-live="polite">
                 <LoaderCircle class="size-4 animate-spin" />正在加载
               </p>
+              <div v-if="messagesError && messages.length === 0" role="alert" class="flex flex-col items-center gap-3 py-8 text-sm">
+                <p class="text-red-600">{{ messagesError }}</p>
+                <Button variant="outline" size="sm" :disabled="messagesLoading" @click="loadMoreMessages">重试加载</Button>
+              </div>
+              <div v-if="showConversationIntro" class="py-12">
+                <p class="mb-3 text-sm text-muted-foreground">从一个想法开始</p>
+                <h2 class="text-2xl font-medium tracking-tight md:text-3xl">这个会话，想构建什么？</h2>
+                <p class="mt-3 text-sm leading-7 text-muted-foreground">描述应用需求，提交后由所选模型生成回复。</p>
+              </div>
             <div v-if="messages.length > 0" class="mb-8 space-y-5">
               <!-- 我的消息靠右，平台助手回复靠左 -->
               <template v-for="message in messages" :key="message.id">
@@ -858,9 +890,12 @@ onMounted(() => {
             <p v-if="runNotice" role="status" class="mb-4 rounded-lg border bg-white px-3 py-2 text-xs leading-6 text-neutral-600">{{ runNotice }}</p>
             </div>
 
-            <!--
-              底部输入区
-            -->
+          </div>
+        </div>
+
+        <!-- 输入区独立于消息滚动和空会话布局，不随历史加载移动或重建。 -->
+        <div class="shrink-0 px-4 md:px-6">
+          <div class="mx-auto w-full max-w-3xl">
             <ConversationComposer
               ref="composerRef"
               v-model:draft="draftInput"
@@ -869,17 +904,15 @@ onMounted(() => {
               :models="availableModels"
               :settings-loaded="settingsLoaded"
               :submitting="submitting"
+              :disabled="!selectedConversationId || restoringConversation || messagesPage === 0 || !settingsLoaded"
               :running="runRunning"
               :stopping="cancelling"
               :error="sendError"
               :selected-element="selectedElement"
-              :show-intro="showComposerIntro"
               @submit="submitMessage"
               @stop="stopRun"
               @cancel-element="selectedElement = null"
             />
-            <!-- 会话还没有消息时，上方 flex-1 与这个等高空隙把输入框顶到垂直居中；发出第一条后空隙消失，输入框落到底部 -->
-            <div v-if="showComposerIntro" class="flex-1" />
           </div>
         </div>
     </div>
