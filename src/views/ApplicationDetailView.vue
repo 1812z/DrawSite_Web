@@ -320,18 +320,20 @@ async function loadMessages() {
   messageRequest++
   messagesLoading.value = false
   followBottom = true
+  // 立即并行发起，结果在消息初始化后应用，避免覆盖实时消息和提前发送。
+  const details = Promise.allSettled([
+    agentApi.listClarifications(applicationId, conversationId),
+    agentApi.getLatestRun(applicationId, conversationId),
+  ])
   await loadMoreMessages()
   if (version !== conversationVersion) return
-  try {
-    const items = await agentApi.listClarifications(applicationId, conversationId)
-    if (version !== conversationVersion) return
-    clarificationHistory.value = items
-  } catch (cause) {
-    if (version === conversationVersion) questionError.value = describeError(cause, '加载询问失败')
-  }
+  const [questions, latest] = await details
   if (version !== conversationVersion) return
+  if (questions.status === 'fulfilled') clarificationHistory.value = questions.value
+  else questionError.value = describeError(questions.reason, '加载询问失败')
   try {
-    const run = await agentApi.getLatestRun(applicationId, conversationId)
+    if (latest.status === 'rejected') throw latest.reason
+    const run = latest.value
     if (version !== conversationVersion) return
     // 普通生成也要恢复，不能仅在存在待回答问题时订阅。
     if (run?.status === 'RUNNING') {
