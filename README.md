@@ -1,5 +1,17 @@
-# Vue 3 + TypeScript + Vite
+<div align="center">
 
-This template should help get you started developing with Vue 3 and TypeScript in Vite. The template uses Vue 3 `<script setup>` SFCs, check out the [script setup docs](https://v3.vuejs.org/api/sfc-script-setup.html#sfc-script-setup) to learn more.
+<img src="docs/assets/logo.svg" width="120" height="120" alt="绘站 Logo" />
 
-Learn more about the recommended Project Setup and IDE Support in the [Vue Docs TypeScript Guide](https://vuejs.org/guide/typescript/overview.html#project-setup).
+# 绘站 · DrawSite
+
+**从一句需求到应用开发、测试与发布的 AI 开发平台**
+
+[![GitHub](https://img.shields.io/badge/GitHub-DrawSite-black?style=flat-square&logo=github)](https://github.com/1812z/DrawSite)
+![Java](https://img.shields.io/badge/Java-21-orange?style=flat-square)
+![Spring Boot](https://img.shields.io/badge/Spring_Boot-4.1.1-6DB33F?style=flat-square&logo=springboot&logoColor=white)
+![PostgreSQL](https://img.shields.io/badge/Database-PostgreSQL-4169E1?style=flat-square&logo=postgresql&logoColor=white)
+![Vue](https://img.shields.io/badge/Frontend-Vue_3-4FC08D?style=flat-square&logo=vuedotjs&logoColor=white)
+
+详情见 [后端仓库](https://github.com/1812z/DrawSite)
+
+</div>
