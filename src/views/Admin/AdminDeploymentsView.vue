@@ -182,7 +182,7 @@ onMounted(() => { if (auth.isAdmin) void load() })
 
       <!-- 执行输出面板已并入日志弹窗 -->
 
-      <Dialog :open="logsOpen" :title="`容器日志 · ${logsTitle}`" class="max-w-3xl" @update:open="logsOpen = $event">
+      <Dialog :open="logsOpen" :title="`${logsTitle}`" class="max-w-3xl" @update:open="logsOpen = $event">
         <div class="space-y-3">
           <p v-if="logsError" role="alert" class="rounded-lg border border-red-200 px-3 py-2 text-xs leading-5 text-red-600">{{ logsError }}</p>
           <div class="max-h-[60vh] min-h-24 overflow-auto rounded-lg border bg-neutral-50 px-3 py-2">

@@ -248,7 +248,7 @@ async function refreshOverview() {
         return
       }
     }
-    overviewNotice.value = '已刷新。'
+    overviewNotice.value = '已刷新'
   } catch (cause) {
     overviewNotice.value = describeError(cause, '刷新失败')
   } finally {
